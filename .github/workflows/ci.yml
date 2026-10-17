@@ -1,0 +1,50 @@
+name: schema-tests
+on: [pull_request]
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    env:
+      TEST_ADMIN_DSN: postgresql://postgres:pw@localhost:5432/postgres   # throwaway service container
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw          # throwaway service container; never a real DSN here
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install postgres client for T15 (pg_dump and pg_restore)
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: pip install -r requirements.txt
+      - name: Tests (serial because role creation is cluster-scoped)
+        shell: bash                       # explicit bash => -eo pipefail, so pytest's exit code survives `| tee`
+        run: |
+          set -o pipefail
+          pytest tests -v -p no:randomly -p no:xdist --junitxml=junit.xml 2>&1 | tee pytest.log
+      - name: Evidence gate (T15 must pass, no unexpected skips, required cases present)
+        if: always()
+        run: python scripts/ci_gate.py junit.xml
+      - name: Mutation check, T10 must fail when FOR SHARE is removed
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          n=$(grep -c 'FOR SHARE;' migrations/sql/0001_schema_v0.sql)
+          [ "$n" = "2" ] || { echo "mutation tripwire: expected 2 'FOR SHARE;' in the schema, found $n. If the schema changed on purpose, update the mutation step and T10 together."; exit 1; }
+          sed 's/FOR SHARE;/;/' migrations/sql/0001_schema_v0.sql > /tmp/mutant.sql
+          SCHEMA_SQL=/tmp/mutant.sql pytest tests/test_schema_v0.py -k "T10" -p no:randomly -p no:xdist --junitxml=mutant.xml 2>&1 | tee mutant.log || true
+          python scripts/mutation_check.py mutant.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s0-06-evidence
+          path: |
+            junit.xml
+            pytest.log
+            mutant.xml
+            mutant.log
