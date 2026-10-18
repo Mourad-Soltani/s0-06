@@ -1,5 +1,8 @@
 name: schema-tests
-on: [pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -25,20 +28,20 @@ jobs:
         shell: bash                       # explicit bash => -eo pipefail, so pytest's exit code survives `| tee`
         run: |
           set -o pipefail
-          pytest tests -v -p no:randomly -p no:xdist --junitxml=junit.xml 2>&1 | tee pytest.log
+          pytest infra/schema/tests infra/ci/tests -v -p no:randomly -p no:xdist --junitxml=junit.xml 2>&1 | tee pytest.log
       - name: Evidence gate (T15 must pass, no unexpected skips, required cases present)
         if: always()
-        run: python scripts/ci_gate.py junit.xml
+        run: python infra/ci/scripts/ci_gate.py junit.xml
       - name: Mutation check, T10 must fail when FOR SHARE is removed
         if: always()
         shell: bash
         run: |
           set -o pipefail
-          n=$(grep -c 'FOR SHARE;' migrations/sql/0001_schema_v0.sql)
+          n=$(grep -c 'FOR SHARE;' infra/schema/migrations/sql/0001_schema_v0.sql)
           [ "$n" = "2" ] || { echo "mutation tripwire: expected 2 'FOR SHARE;' in the schema, found $n. If the schema changed on purpose, update the mutation step and T10 together."; exit 1; }
-          sed 's/FOR SHARE;/;/' migrations/sql/0001_schema_v0.sql > /tmp/mutant.sql
-          SCHEMA_SQL=/tmp/mutant.sql pytest tests/test_schema_v0.py -k "T10" -p no:randomly -p no:xdist --junitxml=mutant.xml 2>&1 | tee mutant.log || true
-          python scripts/mutation_check.py mutant.xml
+          sed 's/FOR SHARE;/;/' infra/schema/migrations/sql/0001_schema_v0.sql > /tmp/mutant.sql
+          SCHEMA_SQL=/tmp/mutant.sql pytest infra/schema/tests/test_schema_v0.py -k "T10" -p no:randomly -p no:xdist --junitxml=mutant.xml 2>&1 | tee mutant.log || true
+          python infra/ci/scripts/mutation_check.py mutant.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
