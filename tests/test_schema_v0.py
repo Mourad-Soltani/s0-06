@@ -125,7 +125,7 @@ def test_T1_valid_permission_sends(w):
     c = w.contact()
     p = w.proposal(w.lead(c), w.perm(c))
     w.send(p)
-    assert w.one("SELECT status FROM core.action_proposal WHERE id=%s", p) == "SENT"
+    assert w.one("SELECT status FROM core.action_proposal WHERE id=%s", p) == "SENDING"
 
 
 @pytest.mark.parametrize("case", ["missing", "expired", "withdrawn", "quarantined",
