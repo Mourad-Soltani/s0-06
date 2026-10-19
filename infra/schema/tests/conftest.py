@@ -8,8 +8,17 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-# SCHEMA_SQL override exists for the CI mutation check (scripts/mutation_check.py); never set it otherwise
-SQL_FILE = pathlib.Path(os.environ.get("SCHEMA_SQL") or ROOT / "migrations" / "sql" / "0001_schema_v0.sql")
+MIG_SQL_DIR = ROOT / "migrations" / "sql"
+
+
+def schema_files():
+    """Every NNNN_*.sql in order. SCHEMA_SQL replaces 0001 ONLY: it exists for the CI mutation check
+    (infra/ci/scripts/mutation_check.py); never set it otherwise."""
+    files = sorted(MIG_SQL_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    override = os.environ.get("SCHEMA_SQL")
+    if override:
+        files = [pathlib.Path(override) if f.name.startswith("0001_") else f for f in files]
+    return files
 ADMIN = os.environ.get("TEST_ADMIN_DSN")  # superuser DSN, e.g. postgresql://postgres:pw@localhost:5432/postgres
 
 
@@ -37,7 +46,8 @@ def base_db():
     name = f"s006_base_{uuid.uuid4().hex[:8]}"
     create_db(name)
     with psycopg.connect(dsn_for(name), autocommit=True) as c:
-        c.execute(SQL_FILE.read_text())
+        for f in schema_files():
+            c.execute(f.read_text())
     yield name
     drop_db(name)
 
