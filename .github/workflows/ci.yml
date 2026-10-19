@@ -28,7 +28,7 @@ jobs:
         shell: bash                       # explicit bash => -eo pipefail, so pytest's exit code survives `| tee`
         run: |
           set -o pipefail
-          pytest infra/schema/tests infra/ci/tests -v -p no:randomly -p no:xdist --junitxml=junit.xml 2>&1 | tee pytest.log
+          pytest infra/schema/tests infra/ci/tests shared/tests -v -p no:randomly -p no:xdist --junitxml=junit.xml 2>&1 | tee pytest.log
       - name: Evidence gate (T15 must pass, no unexpected skips, required cases present)
         if: always()
         run: python infra/ci/scripts/ci_gate.py junit.xml
