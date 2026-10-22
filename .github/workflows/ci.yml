@@ -42,6 +42,29 @@ jobs:
           sed 's/FOR SHARE;/;/' infra/schema/migrations/sql/0001_schema_v0.sql > /tmp/mutant.sql
           SCHEMA_SQL=/tmp/mutant.sql pytest infra/schema/tests/test_schema_v0.py -k "T10" -p no:randomly -p no:xdist --junitxml=mutant.xml 2>&1 | tee mutant.log || true
           python infra/ci/scripts/mutation_check.py mutant.xml
+      - name: Mutation check for the kill-gate lock (0002)
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          f=infra/schema/migrations/sql/0002_outbox_killswitch_cost.sql
+          n=$(grep -c 'FOR SHARE) k;' "$f")
+          [ "$n" = "1" ] || { echo "mutation tripwire: expected 1 'FOR SHARE) k;' in $f, found $n. If the schema changed on purpose, update this step and the K7 tests together."; exit 1; }
+          sed 's/FOR SHARE) k;/) k;/' "$f" > /tmp/mutant0002.sql
+          SCHEMA_SQL_0002=/tmp/mutant0002.sql pytest infra/schema/tests/test_migration_0002.py -k "K7" -p no:randomly -p no:xdist --junitxml=mutant2.xml 2>&1 | tee mutant2.log || true
+          python infra/ci/scripts/mutation_check.py mutant2.xml --expect test_K7a test_K7b
+      - name: Mutation check for the kill-aware claim (0003)
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          f=infra/schema/migrations/sql/0003_kill_aware_claim.sql
+          p='AND NOT core.outbox_paused(e.marketplace, e.event_type)'
+          n=$(grep -cF "$p" "$f")
+          [ "$n" = "1" ] || { echo "mutation tripwire: expected 1 claim predicate in $f, found $n. If the schema changed on purpose, update this step and the KQ tests together."; exit 1; }
+          grep -vF "$p" "$f" > /tmp/mutant0003.sql
+          SCHEMA_SQL_0003=/tmp/mutant0003.sql pytest infra/schema/tests/test_migration_0003.py -k "KQ1 or KQ2" -p no:randomly -p no:xdist --junitxml=mutant3.xml 2>&1 | tee mutant3.log || true
+          python infra/ci/scripts/mutation_check.py mutant3.xml --expect test_KQ1 test_KQ2 --no-sentinel
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -51,3 +74,7 @@ jobs:
             pytest.log
             mutant.xml
             mutant.log
+            mutant2.xml
+            mutant2.log
+            mutant3.xml
+            mutant3.log
