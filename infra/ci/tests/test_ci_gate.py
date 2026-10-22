@@ -131,3 +131,44 @@ def test_mutation_error_skip_or_missing_is_rejected(tmp_path):
     assert mut(tmp_path, case(T10A, "error"), case(T10B, "failure", SENTINEL)).returncode != 0
     assert mut(tmp_path, case(T10A, "skipped"), case(T10B, "failure", SENTINEL)).returncode != 0
     assert mut(tmp_path, None, case(T10B, "failure", SENTINEL)).returncode != 0
+
+
+# ---------------- mutation_check.py generalized modes (S1-08)
+def mut_args(tmp_path, body, *args):
+    f = tmp_path / "mutant.xml"
+    f.write_text(f"<testsuites><testsuite>{body}</testsuite></testsuites>")
+    return subprocess.run([sys.executable, str(SCRIPTS / "mutation_check.py"), str(f), *args],
+                          capture_output=True, text=True)
+
+
+K7A, K7B = "test_K7a_kill_waits_for_in_flight_send", "test_K7b_send_waits_for_in_flight_kill_then_fails"
+KQ1, KQ2 = "test_KQ1_paused_marketplace_is_not_claimed", "test_KQ2_global_kill_pauses_tagged_events_only"
+
+
+def test_mutation_expect_names_with_sentinel_ok(tmp_path):
+    body = case(K7A, "failure", SENTINEL) + case(K7B, "failure", SENTINEL)
+    r = mut_args(tmp_path, body, "--expect", "test_K7a", "test_K7b")
+    assert r.returncode == 0 and "K7a and K7b" in r.stdout
+
+
+def test_mutation_expect_names_rejects_pass_wrong_reason_error_skip_and_missing(tmp_path):
+    ok_b = case(K7B, "failure", SENTINEL)
+    args = ("--expect", "test_K7a", "test_K7b")
+    assert mut_args(tmp_path, case(K7A) + ok_b, *args).returncode != 0                               # passed
+    assert mut_args(tmp_path, case(K7A, "failure", "AssertionError: other") + ok_b, *args).returncode != 0
+    assert mut_args(tmp_path, case(K7A, "error") + ok_b, *args).returncode != 0
+    assert mut_args(tmp_path, case(K7A, "skipped") + ok_b, *args).returncode != 0
+    assert mut_args(tmp_path, ok_b, *args).returncode != 0                                           # missing
+
+
+def test_mutation_no_sentinel_accepts_any_failure_but_not_pass_error_or_skip(tmp_path):
+    args = ("--expect", "test_KQ1", "test_KQ2", "--no-sentinel")
+    other = case(KQ2, "failure", "assert 1 == 2")
+    assert mut_args(tmp_path, case(KQ1, "failure", "assert 0 == 1") + other, *args).returncode == 0
+    assert mut_args(tmp_path, case(KQ1) + other, *args).returncode != 0
+    assert mut_args(tmp_path, case(KQ1, "error") + other, *args).returncode != 0
+    assert mut_args(tmp_path, case(KQ1, "skipped") + other, *args).returncode != 0
+
+
+def test_mutation_bad_arguments_exit_with_usage(tmp_path):
+    assert mut_args(tmp_path, "", "--bogus").returncode != 0

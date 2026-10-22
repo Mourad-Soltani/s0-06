@@ -12,13 +12,16 @@ MIG_SQL_DIR = ROOT / "migrations" / "sql"
 
 
 def schema_files():
-    """Every NNNN_*.sql in order. SCHEMA_SQL replaces 0001 ONLY: it exists for the CI mutation check
-    (infra/ci/scripts/mutation_check.py); never set it otherwise."""
-    files = sorted(MIG_SQL_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
-    override = os.environ.get("SCHEMA_SQL")
-    if override:
-        files = [pathlib.Path(override) if f.name.startswith("0001_") else f for f in files]
-    return files
+    """Every NNNN_*.sql in order. For the CI mutation checks (infra/ci/scripts/mutation_check.py) a file can be
+    replaced: SCHEMA_SQL replaces 0001, SCHEMA_SQL_0002 replaces 0002, SCHEMA_SQL_0003 replaces 0003.
+    Never set these otherwise."""
+    out = []
+    for f in sorted(MIG_SQL_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+        override = os.environ.get("SCHEMA_SQL_" + f.name[:4])
+        if not override and f.name.startswith("0001_"):
+            override = os.environ.get("SCHEMA_SQL")
+        out.append(pathlib.Path(override) if override else f)
+    return out
 ADMIN = os.environ.get("TEST_ADMIN_DSN")  # superuser DSN, e.g. postgresql://postgres:pw@localhost:5432/postgres
 
 
