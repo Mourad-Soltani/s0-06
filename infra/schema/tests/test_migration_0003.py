@@ -21,8 +21,13 @@ def evm(w, marketplace, event_type="lead.scored"):
                  "VALUES (gen_random_uuid(),%s,%s) RETURNING id", event_type, marketplace)
 
 
-def claim(w, worker="w1"):
-    return [r[0] for r in w.c.execute("SELECT id FROM core.claim_outbox_events(%s, 50)", (worker,)).fetchall()]
+def claim(w, worker="w1", event_type="lead.scored"):
+    """Ids claimed by this worker. Filtered to one event type by default, because killing a marketplace itself
+    emits an adapter.killed event for that marketplace, and adapter.* events are deliberately never paused."""
+    q = "SELECT id FROM core.claim_outbox_events(%s, 50)"
+    if event_type is None:
+        return [r[0] for r in w.c.execute(q, (worker,)).fetchall()]
+    return [r[0] for r in w.c.execute(q + " WHERE event_type = %s", (worker, event_type)).fetchall()]
 
 
 def test_KQ1_paused_marketplace_is_not_claimed(w):
@@ -39,7 +44,7 @@ def test_KQ2_global_kill_pauses_tagged_events_only(w):
     untagged = evm(w, None)                                                    # no marketplace: never paused
     notice = evm(w, "GUMROAD", "adapter.rate_limited")                         # adapter.*: never paused
     kill(w, "GLOBAL")
-    claimed = claim(w)
+    claimed = claim(w, event_type=None)
     assert tagged not in claimed
     assert {untagged, notice} <= set(claimed)
     kinds = {r[0] for r in w.c.execute("SELECT event_type FROM core.outbox_event WHERE id = ANY(%s)", (claimed,)).fetchall()}
