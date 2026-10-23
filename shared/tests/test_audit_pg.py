@@ -98,6 +98,8 @@ def test_AW7_the_writer_is_the_only_way_in(db):
         with pytest.raises(errors.InsufficientPrivilege):
             role(db, r, lambda: db.conn.execute(raw))
         assert isinstance(role(db, r, lambda: AuditWriter(db.conn).record(r, "NOTE")), int)    # the function works
+    with pytest.raises(errors.InsufficientPrivilege):                                          # schema USAGE is not table access
+        role(db, "audit_writer", lambda: db.conn.execute("SELECT 1 FROM core.lead LIMIT 1").fetchall())
     with pytest.raises(errors.InsufficientPrivilege):                                          # not granted to others
         role(db, "pii_svc", lambda: db.conn.execute(
             "SELECT audit.hash_for(gen_random_uuid(), 'payload', '\\x00'::bytea, '\\x00'::bytea)"))
