@@ -2,7 +2,7 @@
 import pytest
 
 from shared.cost import (ROLES, BudgetExhausted, InvalidRouting, ModelPrice, NoLlmForRole, NotConfiguredNotifier,
-                         PriceBook, RecordingNotifier, RoutingPolicy, UnpricedModel, CostAlert)
+                         PriceBook, RecordingNotifier, RoutingPolicy, UnpricedModel, CostAlert, crossed)
 
 BOOK = PriceBook({"small": ModelPrice(300_000, 1_500_000), "strong": ModelPrice(3_000_000, 15_000_000)})
 
@@ -64,3 +64,12 @@ def test_CU5_notifiers():
     with pytest.raises(RuntimeError):
         NotConfiguredNotifier().notify(alert)
     assert issubclass(BudgetExhausted, RuntimeError)
+
+
+def test_CU6_threshold_crossing_uses_exact_integers_not_the_rounded_percentage():
+    assert crossed(239_999_999, 300_000_000, 80) is False        # 79.9999997%: the DB's 2-decimal pct reads 80.00
+    assert crossed(240_000_000, 300_000_000, 80) is True
+    assert crossed(299_999_999, 300_000_000, 100) is False and crossed(300_000_000, 300_000_000, 100) is True
+    assert crossed(0, 300_000_000, 80) is False and crossed(10 ** 15, 300_000_000, 100) is True
+    with pytest.raises(ValueError):
+        crossed(1, 0, 80)

@@ -121,12 +121,20 @@ class RecordingNotifier:
         self.alerts.append(alert)
 
 
+def crossed(spent_micro_usd: int, ceiling_micro_usd: int, threshold_pct: int) -> bool:
+    """Exact integer test for "spent has reached threshold% of the ceiling". core.cost_status() rounds pct_used to
+    2 decimals for display (79.9999997% shows as 80.00), so alerts must never be decided from it."""
+    if ceiling_micro_usd <= 0:
+        raise ValueError("ceiling must be positive")
+    return spent_micro_usd * 100 >= threshold_pct * ceiling_micro_usd
+
+
 @dataclass(frozen=True)
 class CostStatus:
     period_start: date
     spent_micro_usd: int
     ceiling_micro_usd: int
-    pct_used: Decimal
+    pct_used: Decimal                   # rounded to 2 decimals for display; alerts use crossed()
 
 
 @dataclass(frozen=True)
@@ -198,7 +206,7 @@ class CostTracker:
         alert_pct = self.conn.execute("SELECT alert_pct FROM core.cost_config").fetchone()[0]
         outcomes = []
         for threshold in sorted({alert_pct, 100}):
-            if st.pct_used < threshold:
+            if not crossed(st.spent_micro_usd, st.ceiling_micro_usd, threshold):
                 continue
             already = self.conn.execute(
                 "SELECT EXISTS (SELECT 1 FROM core.cost_alert WHERE period_start = %s AND pct = %s)",

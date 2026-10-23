@@ -23,7 +23,8 @@ and their prices.
 - One `core.cost_ledger` row per call (`call_id` unique, so a retry cannot double count), append-only.
 - Cost = ceil((input_tokens x input price + output_tokens x output price) / 1,000,000), exact integers, rounded up.
 - Infrastructure costs are recorded as `INFRA` rows with an item code.
-- `core.cost_status()` sums one UTC calendar month against the ceiling.
+- `core.cost_status()` sums one UTC calendar month against the ceiling. Its `pct_used` is rounded to 2 decimals for
+  display, so alerts are decided from exact integers (`spent x 100 >= threshold x ceiling`), never from that figure.
 - Before a paid call, `require_headroom(estimate)` refuses a call that would pass the ceiling.
 
 ## Alert path
