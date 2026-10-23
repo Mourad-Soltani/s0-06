@@ -65,3 +65,8 @@ GRANT EXECUTE ON FUNCTION audit.hash_for(uuid, text, bytea, bytea) TO app_rw, au
 GRANT EXECUTE ON FUNCTION audit.record_event(uuid, text, core.marketplace, uuid, uuid, text, bytea, text,
                                              smallint, text, bytea, uuid) TO app_rw, audit_writer;
 REVOKE INSERT ON audit.event FROM app_rw, audit_writer;      -- the functions above are the only way in
+
+-- The writer's statement names core.marketplace (a cast), and naming a type needs USAGE on its schema. app_rw
+-- already has it; audit_writer did not. Schema USAGE ONLY: no table or other function privileges in core
+-- (test AW7 asserts audit_writer still cannot read core.lead).
+GRANT USAGE ON SCHEMA core TO audit_writer;

@@ -16,6 +16,7 @@ SQL_FILE = Path(__file__).resolve().parent.parent / "sql" / "0004_audit_choke_po
 
 # Kept in Python, not a .sql file (conftest applies every NNNN_*.sql).
 DOWNGRADE_SQL = """
+REVOKE USAGE ON SCHEMA core FROM audit_writer;
 GRANT INSERT ON audit.event TO app_rw, audit_writer;
 DROP FUNCTION IF EXISTS audit.record_event(uuid, text, core.marketplace, uuid, uuid, text, bytea, text,
                                            smallint, text, bytea, uuid);
