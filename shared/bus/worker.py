@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Protocol, Tuple
 
 from shared.bus.events import CONSUMER_NAME_RE, KNOWN_EVENT_TYPES, Event, error_code
+from shared.tracing_policy import NoopTracer
 
 Handler = Callable[[object, Event], None]
 
@@ -30,8 +31,9 @@ class RunResult:
 
 class Worker:
     def __init__(self, store: Store, worker_id: str, *, limit: int = 10, lease_seconds: float = 60,
-                 max_attempts: int = 5, backoff_seconds: float = 30):
+                 max_attempts: int = 5, backoff_seconds: float = 30, tracer=None):
         self.store = store
+        self.tracer = tracer or NoopTracer()          # spans carry ids and codes only (shared/tracing_policy.py)
         self.worker_id = worker_id
         self.limit = limit
         self.lease_seconds = lease_seconds
@@ -55,21 +57,31 @@ class Worker:
         res.claimed = len(events)
         for ev in events:
             routes = self._routes.get(ev.event_type, [])
-            try:
-                for consumer, handler in routes:
-                    self.store.process(consumer, ev, handler)
-            except Exception as exc:  # noqa: BLE001 - any handler failure is a retry, never a crash
-                status = self.store.fail(ev.id, self.worker_id, error_code(exc),
-                                         self.max_attempts, self.backoff_seconds)
-                if status == "DEAD":
-                    res.dead += 1
-                elif status == "PENDING":
-                    res.retried += 1
-                continue   # status None: the claim was lost to another worker, who now owns this event
-            if self.store.ack(ev.id, self.worker_id):
-                res.done += 1
-                if not routes:
-                    res.unrouted += 1
+            with self.tracer.span(
+                    "bus.process_event", audit_trace_id=ev.trace_id, **{
+                        "event.type": ev.event_type, "event.id": ev.event_id, "outbox.id": ev.id,
+                        "marketplace": ev.marketplace, "lead.id": ev.lead_id, "attempts": ev.attempts,
+                        "worker.id": self.worker_id}) as sp:
+                try:
+                    for consumer, handler in routes:
+                        self.store.process(consumer, ev, handler)
+                except Exception as exc:  # noqa: BLE001 - any handler failure is a retry, never a crash
+                    code = error_code(exc)
+                    status = self.store.fail(ev.id, self.worker_id, code, self.max_attempts, self.backoff_seconds)
+                    sp.set_error_code(code)
+                    sp.set_attribute("outcome", status or "CLAIM_LOST")
+                    if status == "DEAD":
+                        res.dead += 1
+                    elif status == "PENDING":
+                        res.retried += 1
+                    continue   # status None: the claim was lost to another worker, who now owns this event
+                if self.store.ack(ev.id, self.worker_id):
+                    res.done += 1
+                    sp.set_attribute("outcome", "UNROUTED" if not routes else "DONE")
+                    if not routes:
+                        res.unrouted += 1
+                else:
+                    sp.set_attribute("outcome", "CLAIM_LOST")
         return res
 
     def drain(self, max_rounds: int = 100) -> RunResult:
