@@ -1,135 +1,108 @@
+"""The thin seam between the adapter and Gumroad. GumroadTransport is what the adapter needs; HttpGumroadTransport
+implements it over Gumroad's REST API (api.gumroad.com/v2). The spec prefers wrapping an MCP server, which can
+implement this same protocol later. Endpoint paths and offer-code parameter names are from third-party
+documentation and are UNVERIFIED (open item S0-03). The access token never appears in an error or a log line."""
 from __future__ import annotations
 
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
-from adapters.errors import (
-    AuthExpired,
-    MalformedResponse,
-    NotFound,
-    RateLimited,
-    Rejected,
-    TransportError,
-)
+from adapters.errors import (AdapterError, AuthExpired, MalformedResponse, NotFound, RateLimited, Rejected,
+                             TransportError)
+
+
+class GumroadTransport(Protocol):
+    def ping(self) -> None: ...
+    def get_products(self) -> List[Dict[str, Any]]: ...
+    def get_product(self, product_id: str) -> Dict[str, Any]: ...
+    def create_offer_code(self, product_id: str, *, name: str, percent_off: Optional[int] = None,
+                          amount_off_cents: Optional[int] = None) -> Dict[str, Any]: ...
+    def get_sales(self, after: date) -> List[Dict[str, Any]]: ...
+
 
 class HttpGumroadTransport:
     BASE = "https://api.gumroad.com"
 
-    def __init__(self, token: str, opener=None, *, max_pages: int = 100, timeout: float = 30.0):
-        if not token or not isinstance(token, str):
-            raise ValueError("token is required")
-        self._token = token
-        self._opener = opener
-        self._max_pages = max_pages
-        self._timeout = timeout
+    def __init__(self, access_token: str, *, opener: Optional[Callable] = None, timeout: float = 15.0,
+                 max_pages: int = 100):
+        if not access_token:
+            raise ValueError("an access token is required")
+        self._token, self._timeout, self._max_pages = access_token, timeout, max_pages
+        self._open = opener or urllib.request.urlopen
 
-    def _build_request(self, method: str, path: str, data: dict | None = None):
-        url = self.BASE + path
-        body = None
-        headers = {"Authorization": f"Bearer {self._token}"}
-        if data is not None:
-            body = urllib.parse.urlencode(data).encode()
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-        return urllib.request.Request(url, data=body, headers=headers, method=method)
-
-    def _open(self, req):
-        opener = self._opener or urllib.request.urlopen
+    # ------------------------------------------------------------------ plumbing
+    def _call(self, method: str, path: str, form: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        req = urllib.request.Request(
+            self.BASE + path, method=method, data=urllib.parse.urlencode(form).encode() if form else None,
+            headers={"Authorization": f"Bearer {self._token}", "Accept": "application/json"})
         try:
-            with opener(req, timeout=self._timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            self._raise_http(e)
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            msg = str(e)
-            if self._token in msg:
-                msg = "network error"
-            raise TransportError(msg) from None
+            with self._open(req, timeout=self._timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise AuthExpired() from None
+            if exc.code == 404:
+                raise NotFound() from None
+            if exc.code == 429:
+                raise RateLimited(_retry_after(exc)) from None
+            raise Rejected(exc.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise TransportError() from None
+        except (ValueError, UnicodeDecodeError):
+            raise MalformedResponse("invalid json") from None
+        if not isinstance(body, dict):
+            raise MalformedResponse("response is not an object")
+        if body.get("success") is False:
+            raise Rejected()
+        return body
 
-    def _raise_http(self, e):
-        code = e.code
-        if code in (401, 403):
-            raise AuthExpired("authentication expired") from None
-        if code == 404:
-            raise NotFound("not found") from None
-        if code == 429:
-            raise RateLimited(self._retry_after(e)) from None
-        raise Rejected(code) from None
+    @staticmethod
+    def _field(body: Dict[str, Any], key: str, kind):
+        if not isinstance(body.get(key), kind):
+            raise MalformedResponse(f"missing or wrong type for {key}")
+        return body[key]
 
-    def _retry_after(self, e):
-        try:
-            header = e.headers.get("Retry-After") if e.headers else None
-        except Exception:
-            return None
-        if header is None:
-            return None
-        try:
-            seconds = float(header)
-        except (TypeError, ValueError):
-            return None
-        return seconds if seconds > 0 else None
+    # ------------------------------------------------------------------ the protocol
+    def ping(self) -> None:
+        self._call("GET", "/v2/user")
 
-    def _parse(self, body: bytes):
-        try:
-            data = json.loads(body)
-        except Exception:
-            raise MalformedResponse("invalid JSON") from None
-        if not isinstance(data, dict):
-            raise MalformedResponse("expected a JSON object")
-        return data
+    def get_products(self) -> List[Dict[str, Any]]:
+        return self._field(self._call("GET", "/v2/products"), "products", list)
 
-    def _unwrap(self, data: dict, key: str):
-        if data.get("success") is not True:
-            raise Rejected(None)
-        if key not in data:
-            raise MalformedResponse(f"missing '{key}'")
-        return data[key]
+    def get_product(self, product_id: str) -> Dict[str, Any]:
+        return self._field(self._call("GET", "/v2/products/" + urllib.parse.quote(product_id, safe="")),
+                           "product", dict)
 
-    def get_products(self):
-        body = self._open(self._build_request("GET", "/v2/products"))
-        products = self._unwrap(self._parse(body), "products")
-        if not isinstance(products, list):
-            raise MalformedResponse("invalid 'products'")
-        return products
-
-    def ping(self):
-        body = self._open(self._build_request("GET", "/v2/user"))
-        return self._unwrap(self._parse(body), "user")
-
-    def get_product(self, product_id: str):
-        pid = urllib.parse.quote(str(product_id), safe="")
-        body = self._open(self._build_request("GET", f"/v2/products/{pid}"))
-        return self._unwrap(self._parse(body), "product")
-
-    def create_offer_code(self, product_id: str, *, name: str,
-                          percent_off: int | None = None,
-                          amount_off_cents: int | None = None):
+    def create_offer_code(self, product_id: str, *, name: str, percent_off: Optional[int] = None,
+                          amount_off_cents: Optional[int] = None) -> Dict[str, Any]:
         if (percent_off is None) == (amount_off_cents is None):
-            raise ValueError("exactly one of percent_off / amount_off_cents is required")
-        payload = {"name": name}
-        if percent_off is not None:
-            payload["percent_off"] = percent_off
-        else:
-            payload["amount_off"] = amount_off_cents
-        pid = urllib.parse.quote(str(product_id), safe="")
-        body = self._open(self._build_request("POST", f"/v2/products/{pid}/offer_codes", data=payload))
-        return self._unwrap(self._parse(body), "offer_code")
+            raise ValueError("exactly one of percent_off and amount_off_cents is required")
+        form: Dict[str, Any] = {"name": name}
+        form["percent_off" if percent_off is not None else "amount_off"] = percent_off if percent_off is not None else amount_off_cents
+        path = "/v2/products/" + urllib.parse.quote(product_id, safe="") + "/offer_codes"
+        return self._field(self._call("POST", path, form), "offer_code", dict)
 
-    def get_sales(self, after_date):
-        path = f"/v2/sales?after={after_date.isoformat()}"
-        collected = []
+    def get_sales(self, after: date) -> List[Dict[str, Any]]:
+        sales: List[Dict[str, Any]] = []
+        path: Optional[str] = "/v2/sales?" + urllib.parse.urlencode({"after": after.isoformat()})
         for _ in range(self._max_pages):
-            body = self._open(self._build_request("GET", path))
-            data = self._parse(body)
-            page = self._unwrap(data, "sales")
-            if not isinstance(page, list):
-                raise MalformedResponse("invalid 'sales'")
-            collected.extend(page)
-            nxt = data.get("next_page_url")
-            if nxt is None:
-                return collected
-            if not isinstance(nxt, str) or not nxt.startswith("/v2/"):
-                raise MalformedResponse("invalid 'next_page_url'")
-            path = nxt
-        raise MalformedResponse("pagination exceeded max_pages")
+            body = self._call("GET", path)
+            sales.extend(self._field(body, "sales", list))
+            path = body.get("next_page_url")
+            if not path:
+                return sales
+            if not isinstance(path, str) or not path.startswith("/v2/"):      # never follow a link off this API
+                raise MalformedResponse("unexpected next_page_url")
+        raise MalformedResponse("too many pages")
+
+
+def _retry_after(exc: urllib.error.HTTPError) -> Optional[float]:
+    try:
+        value = float(exc.headers.get("Retry-After")) if exc.headers is not None else None
+    except (TypeError, ValueError):
+        return None
+    return value if value and value > 0 else None

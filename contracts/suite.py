@@ -32,6 +32,11 @@ class Harness:
     compliant_action: Callable[[MarketplaceAdapter], ProposedAction]
     external_effects: Callable[[MarketplaceAdapter], int]          # externally visible messages sent so far
     adapter_calls: Callable[[MarketplaceAdapter], int]             # calls that reached the marketplace
+    # Optional, for adapters the defaults do not fit (all defaults keep the original behaviour):
+    has_catalog: bool = True                                       # False: the adapter has no products, list is []
+    rate_limit_op: str = "list_products"                           # the operation name inject_rate_limit targets
+    rate_limit_probe: Optional[Callable[[MarketplaceAdapter], Callable]] = None  # call that reaches the marketplace
+    message_body: str = "hello"                                    # a valid body for this adapter's send_reply
 
 
 class FakeClock:
@@ -57,6 +62,9 @@ def _expect_unsupported(fn) -> None:
 def check_list_products_canonical(h: Harness) -> None:
     """list_products returns canonical ProductSnapshot objects for every active listing."""
     a = h.make()
+    if not h.has_catalog:
+        assert a.list_products() == [], "an adapter with no catalog must return an empty list"
+        return
     seeded = set(h.seed_products(a, 3))
     products = a.list_products()
     assert isinstance(products, list), f"list_products must return a list, got {type(products).__name__}"
@@ -95,11 +103,11 @@ def check_send_reply_idempotent(h: Harness) -> None:
         assert h.external_effects(a) == 0, "an unsupported send must have no effect"
         return
     key = uuid4()
-    first, second = a.send_reply(conv, "hello", key), a.send_reply(conv, "hello", key)
+    first, second = a.send_reply(conv, h.message_body, key), a.send_reply(conv, h.message_body, key)
     assert h.external_effects(a) == 1, "the same idempotency key produced more than one external message"
     assert first.external_message_id == second.external_message_id, "a repeat must return the original message id"
     assert first.deduplicated is False and second.deduplicated is True, "SendResult.deduplicated must flag the repeat"
-    a.send_reply(conv, "hello again", uuid4())
+    a.send_reply(conv, h.message_body + " again", uuid4())
     assert h.external_effects(a) == 2, "a new key must send a new message"
 
 
@@ -137,18 +145,19 @@ def check_rate_limit_backoff(h: Harness, governor_factory: Callable = _default_g
     a, clock = h.make(), FakeClock()
     ln = lane(a.marketplace, "contract-account")
     gov = governor_factory(clock, ln)
-    h.inject_rate_limit(a, "list_products", 7.0)
+    probe = h.rate_limit_probe(a) if h.rate_limit_probe else a.list_products
+    h.inject_rate_limit(a, h.rate_limit_op, 7.0)
     start = h.adapter_calls(a)
 
-    first = call_governed(gov, ln, a.list_products)
+    first = call_governed(gov, ln, probe)
     assert first.backoff == Backoff(7.0), f"a 429 with Retry-After 7 must back off exactly 7s, got {first.backoff}"
     assert h.adapter_calls(a) == start + 1
-    assert call_governed(gov, ln, a.list_products).backoff == Backoff(7.0), "the lane must stay blocked"
+    assert call_governed(gov, ln, probe).backoff == Backoff(7.0), "the lane must stay blocked"
     clock.advance(3.0)
-    assert call_governed(gov, ln, a.list_products).backoff == Backoff(4.0), "backoff must shrink as time passes"
+    assert call_governed(gov, ln, probe).backoff == Backoff(4.0), "backoff must shrink as time passes"
     assert h.adapter_calls(a) == start + 1, "the adapter must not be called while the lane is backing off"
     clock.advance(4.0)
-    assert call_governed(gov, ln, a.list_products).ok, "the lane must reopen after the Retry-After"
+    assert call_governed(gov, ln, probe).ok, "the lane must reopen after the Retry-After"
 
     gov.observe(ln, ThrottleStatus(currently_available=150, maximum_available=1000, restore_rate_per_second=50))
     res = call_governed(gov, ln, lambda: None, cost=400)
