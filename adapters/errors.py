@@ -31,3 +31,32 @@ class NotFound(AdapterError):
 class DuplicateOfferCode(AdapterError):
     def __init__(self):
         super().__init__("offer code already exists")
+
+
+class MalformedResponse(AdapterError):
+    """The marketplace answered with something the adapter cannot map. The detail names a FIELD, never a value."""
+
+    def __init__(self, detail: str = "malformed response"):
+        super().__init__(detail)
+
+
+class UnsupportedParameter(AdapterError):
+    """The operation exists but this marketplace cannot honour one of its parameters (for example an expiry)."""
+
+    def __init__(self, parameter: str):
+        super().__init__(f"unsupported parameter: {parameter}")
+
+
+class TransportError(AdapterError):
+    """Network failure or timeout. Nothing is known about whether the request arrived."""
+
+    def __init__(self):
+        super().__init__("network error")
+
+
+class Rejected(AdapterError):
+    """The marketplace refused the request (HTTP status other than auth, not-found and rate-limit)."""
+
+    def __init__(self, status: int | None = None):
+        super().__init__("request rejected" if status is None else f"request rejected ({status})")
+        self.status = status
