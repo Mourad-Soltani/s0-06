@@ -22,7 +22,19 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install postgres client for T15 (pg_dump and pg_restore)
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          # Prefer PG 16 tools over any newer default client (pg_dump 17 embeds SET transaction_timeout)
+          sudo ln -sfn /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
+          sudo ln -sfn /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
+          hash -r
+          pg_dump --version
+          pg_restore --version
       - run: pip install -r requirements.txt
       - name: Tests (serial because role creation is cluster-scoped)
         shell: bash                       # explicit bash => -eo pipefail, so pytest's exit code survives `| tee`
