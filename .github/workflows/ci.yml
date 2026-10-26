@@ -29,6 +29,12 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-client-16
+          # Prefer PG 16 tools over any newer default client (pg_dump 17 embeds SET transaction_timeout)
+          echo "/usr/lib/postgresql/16/bin" | sudo tee /etc/paths.d/pg16
+          sudo ln -sfn /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
+          sudo ln -sfn /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
+          pg_dump --version
+          pg_restore --version
       - run: pip install -r requirements.txt
       - name: Tests (serial because role creation is cluster-scoped)
         shell: bash                       # explicit bash => -eo pipefail, so pytest's exit code survives `| tee`
