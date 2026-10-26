@@ -1,33 +1,27 @@
-"""Errors adapters raise. Messages are fixed strings: no marketplace response text, no identifiers, no PII."""
-from __future__ import annotations
-
-from typing import Optional
-
-
 class AdapterError(Exception):
-    """Base class for everything an adapter raises on purpose."""
+    """Base class for all adapter-layer failures."""
 
+class UnsupportedParameter(AdapterError):
+    pass
+
+class AuthExpired(AdapterError):
+    pass
+
+class MalformedResponse(AdapterError):
+    pass
+
+class NotFound(AdapterError):
+    pass
+
+class TransportError(AdapterError):
+    pass
 
 class RateLimited(AdapterError):
-    """The marketplace refused the call for rate reasons (HTTP 429 or a cost-based throttle)."""
-
-    def __init__(self, retry_after_seconds: Optional[float] = None):
+    def __init__(self, retry_after_seconds=None):
         super().__init__("rate limited")
         self.retry_after_seconds = retry_after_seconds
 
-
-class AuthExpired(AdapterError):
-    """Credentials are no longer valid. The adapter has made no change; the lane should pause."""
-
-    def __init__(self):
-        super().__init__("authentication expired")
-
-
-class NotFound(AdapterError):
-    def __init__(self):
-        super().__init__("not found")
-
-
-class DuplicateOfferCode(AdapterError):
-    def __init__(self):
-        super().__init__("offer code already exists")
+class Rejected(AdapterError):
+    def __init__(self, status=None):
+        super().__init__(f"rejected with status {status}")
+        self.status = status
