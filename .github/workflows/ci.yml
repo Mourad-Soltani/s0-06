@@ -30,9 +30,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client-16
           # Prefer PG 16 tools over any newer default client (pg_dump 17 embeds SET transaction_timeout)
-          echo "/usr/lib/postgresql/16/bin" | sudo tee /etc/paths.d/pg16
           sudo ln -sfn /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
           sudo ln -sfn /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
+          hash -r
           pg_dump --version
           pg_restore --version
       - run: pip install -r requirements.txt
