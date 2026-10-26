@@ -1,54 +1,60 @@
-from adapters.errors import NotFound
+"""In-memory GumroadTransport for tests and contract harnesses. Records every call, and every mutating call
+separately in `writes`, so a contract check can prove an operation had no effect."""
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from datetime import date
+from typing import Any, Dict, List, Optional
+
+from adapters.errors import AuthExpired, NotFound
+
 
 class FakeGumroadTransport:
     def __init__(self):
-        self.products: dict[str, dict] = {}
-        self.sales: list[dict] = []
-        self.writes: list[tuple] = []
-        self.calls: list[str] = []
-        self._faults: dict[str, Exception] = {}
+        self.products: Dict[str, Dict[str, Any]] = {}
+        self.sales: List[Dict[str, Any]] = []
+        self.calls: List[str] = []
+        self.writes: List[tuple] = []
+        self._faults: Dict[str, deque] = defaultdict(deque)
+        self.auth_expired = False
 
-    def inject(self, op: str, exc: Exception) -> None:
-        self._faults[op] = exc
+    def add_product(self, product_id: str, name: str = "Guide", price: int = 1900, currency: str = "usd",
+                    published: bool = True, short_url: Optional[str] = None, **extra) -> None:
+        self.products[product_id] = {"id": product_id, "name": name, "price": price, "currency": currency,
+                                     "published": published, "short_url": short_url or f"https://gum.test/l/{product_id}",
+                                     **extra}
 
-    def _enter(self, op: str):
+    def inject(self, op: str, exc: Exception, times: int = 1) -> None:
+        self._faults[op].extend([exc] * times)
+
+    def _gate(self, op: str) -> None:
         self.calls.append(op)
-        if op in self._faults:
-            raise self._faults[op]
+        if self.auth_expired:
+            raise AuthExpired()
+        if self._faults[op]:
+            raise self._faults[op].popleft()
 
-    def add_product(self, product_id: str, *, price: int = 1000, short_url: str | None = None) -> None:
-        if short_url is None:
-            short_url = f"https://gum.test/l/{product_id}"
-        self.products[product_id] = {
-            "id": product_id,
-            "name": f"Product {product_id}",
-            "price": price,
-            "currency": "usd",
-            "published": True,
-            "short_url": short_url,
-        }
+    def ping(self) -> None:
+        self._gate("ping")
 
-    def ping(self):
-        self._enter("ping")
-        return {"user": {}}
-
-    def get_products(self):
-        self._enter("get_products")
+    def get_products(self) -> List[Dict[str, Any]]:
+        self._gate("get_products")
         return list(self.products.values())
 
-    def get_product(self, product_id: str):
-        self._enter("get_product")
+    def get_product(self, product_id: str) -> Dict[str, Any]:
+        self._gate("get_product")
         if product_id not in self.products:
-            raise NotFound(product_id)
-        return self.products[product_id]
+            raise NotFound()
+        return dict(self.products[product_id])
 
-    def get_sales(self, after_date):
-        self._enter("get_sales")
-        return list(self.sales)
-
-    def create_offer_code(self, product_id: str, *, name: str, **_ignored):
-        self._enter("create_offer_code")
+    def create_offer_code(self, product_id: str, *, name: str, percent_off: Optional[int] = None,
+                          amount_off_cents: Optional[int] = None) -> Dict[str, Any]:
+        self._gate("create_offer_code")
         if product_id not in self.products:
-            raise NotFound(product_id)
+            raise NotFound()
         self.writes.append(("offer_code", product_id, name))
-        return {"name": name}
+        return {"name": name, "percent_off": percent_off, "amount_off": amount_off_cents}
+
+    def get_sales(self, after: date) -> List[Dict[str, Any]]:
+        self._gate("get_sales")
+        return [s for s in self.sales if str(s.get("created_at", ""))[:10] >= after.isoformat()]
