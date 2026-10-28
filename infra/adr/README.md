@@ -20,5 +20,6 @@ One decision per file. `accepted` means ruled by the product owner or Head Chief
 | [ADR-14](ADR-14-audit-choke-point.md) | Audit writer as the single choke point | proposed | S1-07 |
 | [ADR-15](ADR-15-kill-switch.md) | Kill switch semantics | proposed | S1-08 |
 | [ADR-16](ADR-16-tracing.md) | Tracing: one trace per lead, PII-free | proposed | S1-11 |
+| [ADR-17](ADR-17-lead-scoring.md) | Lead scoring, Scout and Qualifier | proposed | S2-03 |
 
 The production-cutover blockers are on [../cutover-checklist.md](../cutover-checklist.md).
