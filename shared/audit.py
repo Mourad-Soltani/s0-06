@@ -68,6 +68,11 @@ class AuditWriter:
                  autonomy_tier, outcome, response_hash, trace_id)).fetchone()
         return row[0]
 
+    def hash_payload(self, lead_id: uuid.UUID, data: Data) -> bytes:
+        """The salted hash the database would store for this payload, for callers that keep the hash on another
+        row (a proposal's payload_hash). Same function and salt as record(); the salt never leaves the database."""
+        return self._hash(lead_id, "payload", data)
+
     def _hash(self, lead_id, label: str, data: Optional[Data]) -> Optional[bytes]:
         if data is None:
             return None
