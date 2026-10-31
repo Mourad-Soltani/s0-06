@@ -33,15 +33,16 @@ def new_lead(db, contact=None):
                f"sig_{uuid.uuid4().hex[:10]}", uuid.uuid4().hex * 2, contact)
 
 
-def proposal(db, *, tier=1, verdict="PASS", status="PROPOSED", marketplace="ETSY", role="COPYWRITER", body=None, lead=None,
+def proposal(db, *, tier=1, verdict="PASS", status="PROPOSED", marketplace="ETSY", channel=None, role="COPYWRITER", body=None, lead=None,
              permission=None, days_ago=None):
     lead = lead or new_lead(db)
+    channel = channel or marketplace
     ref = one(db, "INSERT INTO pii.payload_store(lead_id, body) VALUES (%s,%s) RETURNING payload_id", lead, Json(body)) if body is not None else None
     pid = one(db, "INSERT INTO core.action_proposal(lead_id,role,marketplace,channel,action_type,payload_ref,autonomy_tier,"
                   "compliance_verdict,status,contact_permission_id,idempotency_key,audit_trace_id) "
                   "VALUES (%s,%s::core.agent_role,%s::core.marketplace,%s::core.marketplace,'SEND_MESSAGE',%s,%s,%s::core.verdict,"
                   "%s::core.proposal_status,%s,gen_random_uuid(),gen_random_uuid()) RETURNING id",
-              lead, role, marketplace, marketplace, ref, tier, verdict, status, permission)
+              lead, role, marketplace, channel, ref, tier, verdict, status, permission)
     if days_ago:
         db.conn.execute("UPDATE core.action_proposal SET created_at = now() - make_interval(days => %s) WHERE id=%s", (days_ago, pid))
     return pid
@@ -185,19 +186,19 @@ def test_RV10_review_consent_and_the_send_gate_work_as_one_chain(db):
     consent = ConsentService(db.conn)
     perm = consent.capture(EMAIL, "EMAIL", "https://example.test/optin")
     contact = one(db, "SELECT contact_id FROM pii.contact_permission WHERE id=%s", perm)
-    ok = proposal(db, lead=new_lead(db, contact), permission=perm)
+    ok = proposal(db, lead=new_lead(db, contact), permission=perm, channel="EMAIL")
     queue(db).approve(ok, "alice")
     db.conn.execute("UPDATE core.action_proposal SET status='SENDING' WHERE id=%s", (ok,))     # consent valid: the gate opens
     assert status_of(db, ok) == "SENDING"
 
-    withdrawn = proposal(db, lead=new_lead(db, contact), permission=perm)
+    withdrawn = proposal(db, lead=new_lead(db, contact), permission=perm, channel="EMAIL")
     queue(db).approve(withdrawn, "alice")
     consent.withdraw(contact, "EMAIL")                                                          # consent withdrawn after approval
     with pytest.raises(errors.Error) as e:
         db.conn.execute("UPDATE core.action_proposal SET status='SENDING' WHERE id=%s", (withdrawn,))
     assert e.value.sqlstate == "CP002"
 
-    draft = proposal(db, tier=0, lead=new_lead(db, contact), permission=perm)
+    draft = proposal(db, tier=0, lead=new_lead(db, contact), permission=perm, channel="EMAIL")
     queue(db).approve(draft, "alice")                                                           # approved for the shadow gate...
     with pytest.raises(errors.CheckViolation):                                                  # ...but a Tier 0 draft never sends
         db.conn.execute("UPDATE core.action_proposal SET status='SENDING' WHERE id=%s", (draft,))
@@ -220,7 +221,7 @@ def test_RV11_the_review_role_does_everything_and_the_app_role_cannot_read_bodie
     db.conn.execute("SET ROLE app_rw")
     try:
         q = queue(db)
-        assert len(q.list_pending()) == 2
+        assert len(q.list_pending()) == 3  # c still PROPOSED after edit, plus d and e_
         q.approve(e_, "alice")                                                                  # core tables are allowed
         with pytest.raises(errors.InsufficientPrivilege):                                       # message bodies are not
             q.get(d)
