@@ -198,7 +198,9 @@ def test_RV10_review_consent_and_the_send_gate_work_as_one_chain(db):
         db.conn.execute("UPDATE core.action_proposal SET status='SENDING' WHERE id=%s", (withdrawn,))
     assert e.value.sqlstate == "CP002"
 
-    draft = proposal(db, tier=0, lead=new_lead(db, contact), permission=perm, channel="EMAIL")
+    # Re-consent after withdrawal so the send gate reaches the Tier-0 table CHECK.
+    perm2 = consent.capture(EMAIL, "EMAIL", "https://example.test/optin")
+    draft = proposal(db, tier=0, lead=new_lead(db, contact), permission=perm2, channel="EMAIL")
     queue(db).approve(draft, "alice")                                                           # approved for the shadow gate...
     with pytest.raises(errors.CheckViolation):                                                  # ...but a Tier 0 draft never sends
         db.conn.execute("UPDATE core.action_proposal SET status='SENDING' WHERE id=%s", (draft,))
