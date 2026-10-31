@@ -19,3 +19,4 @@ Open (known to be undone), Unconfirmed (not evidenced in the project record, con
 | C11 | Kill switch: decide whether an HTTP API is required for v1.1 | ADR-15 | Open | Decision needed |
 | C12 | LICENSE copyright holder confirmed | S1-00 | Open | No |
 | C13 | Thresholds recalibrated after 100 labelled leads | ADR-06 | Open | No, after cutover |
+| C14 | Review API security: TLS terminated in front of it, reviewer identity moved from static bearer tokens to SSO or managed per-reviewer credentials held in the secrets manager, bound to localhost behind the proxy | ADR-18 | Open | Yes, blocks production cutover |
