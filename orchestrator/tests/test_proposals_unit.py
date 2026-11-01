@@ -10,8 +10,12 @@ import pytest
 try:
     import psycopg  # noqa: F401
 except ImportError:                                        # the sandbox has no driver; CI does
+    class _Json:                                           # same shape as psycopg's: the wrapped value is .obj
+        def __init__(self, obj):
+            self.obj = obj
+
     mod = types.ModuleType("psycopg.types.json")
-    mod.Json = lambda v: ("JSON", v)
+    mod.Json = _Json
     for name in ("psycopg", "psycopg.types"):
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules["psycopg.types.json"] = mod
@@ -98,7 +102,7 @@ def test_PW1_a_new_proposal_is_written_audited_and_announced_in_one_transaction(
     assert log == ["sql", "draft", "begin", "sql", "sql", "commit"]               # lookup, then the model, THEN the transaction
     (s1, _), (s2, p2), (s3, p3) = conn.calls
     assert "SELECT id FROM core.action_proposal WHERE idempotency_key" in s1 and "INSERT INTO pii.payload_store" in s2
-    payload = p2[1][1]
+    payload = p2[1].obj
     assert payload == {"context": "consented_outreach", "body": "Subject: Hello\n\nHi there", "source": "LLM",
                        "product_external_id": "gr-1", "discount_pct": "20", "offer_code": "SAVE", "consent_ref": str(PERM)}
     assert "ON CONFLICT (idempotency_key) DO NOTHING" in s3 and "'COPYWRITER'" in s3 and "'SEND_MESSAGE'" in s3
@@ -115,7 +119,7 @@ def test_PW2_the_tier_follows_the_shadow_gate_and_the_audit_names_a_fallback():
                             result=CopyResult("S", "B", 0.6, "TEMPLATE", None, "BUDGET_EXHAUSTED"))
     w.create(brief())
     assert conn.calls[2][1][5] == 1 and pubs[0][1]["payload"]["tier"] == 1
-    assert seen[0]["outcome"] == "FALLBACK_BUDGET_EXHAUSTED" and conn.calls[1][1][1][1]["source"] == "TEMPLATE"
+    assert seen[0]["outcome"] == "FALLBACK_BUDGET_EXHAUSTED" and conn.calls[1][1][1].obj["source"] == "TEMPLATE"
 
 
 def test_PW3_the_proposal_key_is_stable_and_specific():
@@ -153,7 +157,7 @@ def test_PW6_a_failing_audit_rolls_back_the_proposal_and_publishes_nothing():
 def test_PW7_buyer_threads_carry_no_consent_reference_and_no_email_is_ever_stored():
     w, conn, _, _ = make(Cur(None), Cur((REF,)), Cur((PID,)))
     w.create(brief(context="buyer_initiated", contact_permission_id=None))
-    payload = conn.calls[1][1][1][1]
+    payload = conn.calls[1][1][1].obj
     assert "consent_ref" not in payload and payload["discount_pct"] is None and "@" not in str(payload)
 
 
