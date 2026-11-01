@@ -134,7 +134,8 @@ class ReviewQueue:
                               r[8], r[9], r[10]) for r in rows]
 
     def get(self, proposal_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-        """One proposal with its message body (personal data: needs the review_svc role)."""
+        """One proposal with its message body (personal data: needs the review_svc role), the lead's scores and the
+        findings of the latest Guard run."""
         r = self.conn.execute(
             "SELECT p.id, p.lead_id, p.role::text, p.marketplace::text, p.channel::text, p.action_type::text, "
             "p.autonomy_tier, p.confidence, p.compliance_verdict::text, p.status::text, p.created_at, p.payload_ref, s.body "
@@ -144,7 +145,23 @@ class ReviewQueue:
             return None
         keys = ("proposal_id", "lead_id", "role", "marketplace", "channel", "action_type", "autonomy_tier", "confidence",
                 "compliance_verdict", "status", "created_at", "payload_ref", "payload")
-        return {k: _jsonable(v) for k, v in zip(keys, r)}
+        out = {k: _jsonable(v) for k, v in zip(keys, r)}
+        # What a reviewer needs to judge the draft: the lead's scores and signals, and why the Guard said what it said.
+        # Ids, scores, codes and timestamps only: no contact, no address, no name.
+        lead = self.conn.execute(
+            "SELECT status::text, composite_score, confidence, icp_match_score, pain_intensity, authority_signal, timeline_signal, "
+            "budget_signal, risk_flags, product_external_id, source_type, source_marketplace::text, created_at "
+            "FROM core.lead WHERE id = %s", (r[1],)).fetchone()
+        lead_keys = ("status", "composite_score", "confidence", "icp_match_score", "pain_intensity", "authority_signal",
+                     "timeline_signal", "budget_signal", "risk_flags", "product_external_id", "source_type", "source_marketplace",
+                     "created_at")
+        out["lead"] = {k: _jsonable(v) for k, v in zip(lead_keys, lead)} if lead is not None else None
+        rows = self.conn.execute(
+            "SELECT rule_code, severity, evaluated_at FROM core.compliance_finding WHERE proposal_id = %s AND run_id = "
+            "(SELECT run_id FROM core.compliance_finding WHERE proposal_id = %s ORDER BY evaluated_at DESC, id DESC LIMIT 1) "
+            "ORDER BY rule_code", (proposal_id, proposal_id)).fetchall()
+        out["findings"] = [{"rule_code": c, "severity": sv, "evaluated_at": _jsonable(t)} for c, sv, t in rows]
+        return out
 
     def shadow_stats(self, marketplace: str, role: str, tier: int = 0) -> ShadowStats:
         d = self.conn.execute(
