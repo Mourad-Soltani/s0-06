@@ -3,6 +3,7 @@
 skipping. The logic behind the screen is tested without Streamlit in test_dashboard.py. Names AT*."""
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from ui.dashboard import Dashboard
@@ -49,7 +50,9 @@ def test_AT3_a_rejected_token_shows_an_error_and_stays_signed_out(monkeypatch):
     at = fresh().run()
     at.text_input(key="token").set_value("wrong-token-0123456789")
     at.button(key="sign_in").click().run()
-    assert not at.exception and any("not accepted" in e.value for e in at.error) and at.button(key="approve") is None
+    assert not at.exception and any("not accepted" in e.value for e in at.error)
+    with pytest.raises(KeyError):                                           # AppTest raises for a widget that is not drawn
+        at.button(key="approve")
 
 
 def test_AT4_the_reviewer_sees_the_draft_the_scores_and_the_checks_and_approves():
@@ -84,7 +87,9 @@ def test_AT6_rejecting_sends_the_chosen_reason():
 def test_AT7_signing_out_returns_to_the_token_form():
     at = signed_in(FakeReviewClient(make_detail()))
     at.button(key="sign_out").click().run()
-    assert not at.exception and at.text_input(key="token") is not None and at.button(key="approve") is None
+    assert not at.exception and at.text_input(key="token") is not None
+    with pytest.raises(KeyError):
+        at.button(key="approve")
 
 
 def test_AT8_text_from_a_draft_is_shown_as_plain_text_never_as_markup():
