@@ -23,5 +23,6 @@ One decision per file. `accepted` means ruled by the product owner or Head Chief
 | [ADR-17](ADR-17-lead-scoring.md) | Lead scoring, Scout and Qualifier | proposed | S2-03 |
 | [ADR-18](ADR-18-consent-and-review.md) | Consent capture and the review queue | proposed | S2-04, S2-05 |
 | [ADR-19](ADR-19-compliance-guard.md) | Compliance Guard | proposed | S3-02 |
+| [ADR-20](ADR-20-copywriter.md) | Copywriter and the language-model seam | proposed | S3-01 |
 
 The production-cutover blockers are on [../cutover-checklist.md](../cutover-checklist.md).
