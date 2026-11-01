@@ -15,6 +15,8 @@ sent to it. The only way a contact enters the system is a creator importing peop
   dated in the future, or any date or URL that is present but malformed, is rejected.
 - **An opt-out outranks an old list.** A contact who withdrew at or after the row's consent date is skipped. Only a consent dated
   after the withdrawal restores them, and the report says so (`CONSENT_REFRESHED`).
+- **An import never overwrites an existing contact's name.** The address matches in any case and the contact is reused as it is;
+  a name is filled in only when the contact had none. A new file must not replace good data with worse.
 - **Idempotent.** Identical consent is reused, there is one lead per contact and product, and re-running a file changes
   nothing. Duplicate rows in a file are skipped.
 - **Each row commits on its own**: the consent, the lead and its `signal.captured` event together. A failure midway leaves
