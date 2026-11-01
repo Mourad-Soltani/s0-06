@@ -3,7 +3,8 @@
 Nothing can be sent to an address without a current permission row (the database send gate, ADR-11). This is how
 a row comes to exist, and how it stops existing. Capture needs an explicit consent record: an https source_url
 (where consent was given), a capture time, and an expiry. It also clears the contact's quarantine, because ADR-02
-releases a contact only on fresh consent. Withdrawal never deletes: it stamps withdrawn_at, so the history stays.
+releases a contact only on fresh consent. Withdrawal never deletes: it stamps withdrawn_at, so the history stays. An existing contact's name is never overwritten by a later capture (a name from a new file or form
+must not replace good data); a missing name is filled in.
 conn must be autocommit and its role must reach schema pii (pii_svc). The audit hook gets ids and codes only.
 The default 365-day expiry is a PLACEHOLDER pending legal review (cutover item C9)."""
 from __future__ import annotations
@@ -42,7 +43,7 @@ class ConsentService:
             contact_id = self.conn.execute(
                 "INSERT INTO pii.contact (email, name, quarantined) VALUES (%s, %s, false) "
                 "ON CONFLICT (lower(email)) WHERE email IS NOT NULL DO UPDATE "
-                "SET quarantined = false, name = COALESCE(EXCLUDED.name, pii.contact.name) RETURNING contact_id",
+                "SET quarantined = false, name = COALESCE(pii.contact.name, EXCLUDED.name) RETURNING contact_id",
                 (email, name)).fetchone()[0]
             permission_id = self.conn.execute(
                 "INSERT INTO pii.contact_permission (contact_id, channel, basis, captured_at, expires_at, source_url) "
