@@ -27,5 +27,6 @@ One decision per file. `accepted` means ruled by the product owner or Head Chief
 | [ADR-21](ADR-21-consented-lead-intake.md) | Consented lead intake | proposed | S3-05 |
 | [ADR-22](ADR-22-review-dashboard.md) | Review dashboard | proposed | S3-04 |
 | [ADR-23](ADR-23-pipeline-and-closer.md) | The pipeline on one bus, and the Closer | proposed | S3-03, BL-03 |
+| [ADR-24](ADR-24-reconciliation.md) | Settling sends that were claimed but never recorded | proposed | BL-04 |
 
 The production-cutover blockers are on [../cutover-checklist.md](../cutover-checklist.md).

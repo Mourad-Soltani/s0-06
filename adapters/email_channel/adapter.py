@@ -14,7 +14,7 @@ from typing import Callable, Dict, List, Optional
 from adapters import policy
 from adapters.base import MarketplaceAdapter
 from adapters.email_channel import message as msg
-from adapters.errors import NotFound
+from adapters.errors import LookupUnsupported, NotFound
 from shared.models import (ActionType, AdapterCapabilities, AdapterHealth, ComplianceVerdict, Conversation, DraftResult,
                            Marketplace, Message, ProductSnapshot, ProposedAction, RateModel, SendResult, Signal)
 
@@ -68,6 +68,15 @@ class EmailChannelAdapter(MarketplaceAdapter):
 
     def health_check(self) -> AdapterHealth:
         return policy.health_from_ping(self.transport.ping, self._clock)
+
+    def find_send(self, idempotency_key: uuid.UUID) -> Optional[SendResult]:
+        """Ask the provider whether it accepted a message with this key (used to settle a send whose result was never recorded). Returns the
+        result, or None if the provider says it never did. Raises LookupUnsupported when the provider cannot answer authoritatively, and lets
+        transport errors through: an unanswered question is never read as "not sent"."""
+        if not getattr(self.transport, "supports_lookup", False):
+            raise LookupUnsupported()
+        provider_id = self.transport.lookup(str(idempotency_key))
+        return SendResult(external_message_id=str(provider_id)) if provider_id is not None else None
 
     # ------------------------------------------------------------------ declared capability: messaging
     def _list_conversations(self, since: datetime) -> List[Conversation]:
