@@ -1,6 +1,6 @@
 # BL-03: Draft when a lead qualifies
 
-Status: backlog, proposed next
+Status: done in S3-03 (see ADR-23)
 Raised by: Dev Team, while building S3-05
 Depends on: S3-01 (Copywriter, proposal writer), S3-05 (leads with a contact and a product)
 
