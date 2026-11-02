@@ -1,6 +1,6 @@
 # BL-04: Reconcile proposals stuck in SENDING
 
-Status: backlog
+Status: done in Sprint 4 (see ADR-24)
 Raised by: Dev Team, while building S3-03
 Depends on: S3-03 (the Closer), an email provider (cutover C3)
 
