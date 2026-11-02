@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from adapters.email_channel.message import OutboundEmail
 from adapters.errors import AuthExpired, NotFound
@@ -17,6 +17,8 @@ class FakeEmailTransport:
         self.calls: List[str] = []
         self._faults: Dict[str, deque] = defaultdict(deque)
         self.auth_expired = False
+        self.supports_lookup = True
+        self.provider_ids = {}
 
     def add_thread(self, thread_id: str, context: str, updated_at: str = "2026-10-19T12:00:00Z", messages=()) -> None:
         self.threads[thread_id] = {"thread_id": thread_id, "context": context, "updated_at": updated_at,
@@ -50,4 +52,9 @@ class FakeEmailTransport:
         self._gate("send")
         self.sent.append(email)
         self.sent_keys.append(idempotency_key)
-        return f"esp-{len(self.sent)}"
+        self.provider_ids[idempotency_key] = f"esp-{len(self.sent)}"
+        return self.provider_ids[idempotency_key]
+
+    def lookup(self, idempotency_key: str):
+        self._gate("lookup")
+        return self.provider_ids.get(idempotency_key)

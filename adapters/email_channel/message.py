@@ -8,7 +8,7 @@ from __future__ import annotations
 import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Protocol, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Tuple
 
 from adapters.errors import MalformedResponse
 from shared.models import Conversation, Message
@@ -42,6 +42,9 @@ class EmailTransport(Protocol):
     def list_threads(self, since: datetime) -> List[Dict[str, Any]]: ...
     def read_thread(self, thread_id: str) -> List[Dict[str, Any]]: ...
     def send(self, email: OutboundEmail, idempotency_key: str) -> str: ...      # returns the provider's message id
+    # Optional. True only for a provider that can say AUTHORITATIVELY whether it accepted a message with this key.
+    supports_lookup: bool
+    def lookup(self, idempotency_key: str) -> Optional[str]: ...                # the provider's message id, or None if it never accepted one
 
 
 def split_message(body: str) -> Tuple[str, str]:

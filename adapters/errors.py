@@ -60,3 +60,10 @@ class Rejected(AdapterError):
     def __init__(self, status: int | None = None):
         super().__init__("request rejected" if status is None else f"request rejected ({status})")
         self.status = status
+
+
+class LookupUnsupported(AdapterError):
+    """The provider cannot say authoritatively whether it accepted a message with a given idempotency key."""
+
+    def __init__(self):
+        super().__init__("provider lookup is not supported")

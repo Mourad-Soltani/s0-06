@@ -171,12 +171,12 @@ class Closer:
 
     def _finish(self, conn, audit, ctx, status: str, outcome: str, sent=None) -> CloseResult:
         with conn.transaction():
-            conn.execute("UPDATE core.action_proposal SET status = %s::core.proposal_status, updated_at = now() WHERE id = %s AND status = 'SENDING'",
-                         (status, ctx["proposal_id"]))
+            ref = hashlib.sha256(str(sent.external_message_id).encode("utf-8")).hexdigest()[:32] if sent is not None else None   # provider ids can contain '@'
+            conn.execute("UPDATE core.action_proposal SET status = %s::core.proposal_status, provider_ref = COALESCE(%s, provider_ref), updated_at = now() "
+                         "WHERE id = %s AND status = 'SENDING'", (status, ref, ctx["proposal_id"]))
             audit("CLOSER_SENT" if status == "SENT" else "CLOSER_FAILED",
                   {"marketplace": ctx["marketplace"], "lead_id": ctx["lead_id"], "tier": ctx["tier"], "outcome": outcome})
             if status == "SENT":
-                ref = hashlib.sha256(str(sent.external_message_id).encode("utf-8")).hexdigest()[:32]       # provider ids may contain '@'
                 publish = self._publish or _default_publish()
                 publish(conn, EventType.ACTION_SENT, event_id=event_id_for(EventType.ACTION_SENT, ctx["proposal_id"]), marketplace=ctx["marketplace"],
                         lead_id=ctx["lead_id"], payload={"proposal_id": str(ctx["proposal_id"]), "link": ctx["how"], "provider_ref": ref,
