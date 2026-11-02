@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
+from shared.bus.events import EventType, event_id_for
+
 _REVIEWER = re.compile(r"^[A-Za-z0-9_:.-]{1,128}$")
 _REASON = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _MARKETPLACE = re.compile(r"^[A-Z][A-Z_]{0,31}$")
@@ -116,8 +118,8 @@ def review_audit_hook(writer) -> Callable[[str, dict], None]:
 
 class ReviewQueue:
     def __init__(self, conn, audit: Optional[Callable[[str, dict], None]] = None,
-                 hasher: Optional[Callable[[uuid.UUID, dict], bytes]] = None):
-        self.conn, self._audit, self._hasher = conn, audit, hasher
+                 hasher: Optional[Callable[[uuid.UUID, dict], bytes]] = None, publish: Optional[Callable] = None):
+        self.conn, self._audit, self._hasher, self._publish = conn, audit, hasher, publish
 
     # ------------------------------------------------------------------ reading
     def list_pending(self, limit: int = 50, marketplace: Optional[str] = None) -> List[PendingAction]:
@@ -192,6 +194,9 @@ class ReviewQueue:
             self.conn.execute("INSERT INTO core.review_decision (proposal_id, decision, reviewer) VALUES (%s, 'APPROVE', %s)",
                               (proposal_id, reviewer))
             self._record("REVIEW_APPROVED", reviewer, row, "OK")
+            if self._publish:                       # the Closer listens for this; it commits or fails with the decision
+                self._publish(self.conn, EventType.ACTION_APPROVED, event_id=event_id_for(EventType.ACTION_APPROVED, proposal_id),
+                              marketplace=row[1], lead_id=row[0], payload={"proposal_id": str(proposal_id), "tier": row[2]}, trace_id=row[0])
 
     def reject(self, proposal_id: uuid.UUID, reviewer: str, reason_code: str) -> None:
         _check_reviewer(reviewer)
