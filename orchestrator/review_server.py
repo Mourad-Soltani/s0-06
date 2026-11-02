@@ -16,6 +16,7 @@ def build() -> ReviewApi:
     import psycopg
     from orchestrator.review_service import ReviewQueue, review_audit_hook
     from shared.audit import AuditWriter
+    from shared.bus.publisher import publish
 
     dsn = os.environ["DATABASE_URL"]
     tokens = json.load(open(os.environ["REVIEW_API_TOKENS_FILE"]))
@@ -25,7 +26,7 @@ def build() -> ReviewApi:
         conn = psycopg.connect(dsn, autocommit=True)
         try:
             writer = AuditWriter(conn)
-            yield ReviewQueue(conn, audit=review_audit_hook(writer), hasher=writer.hash_payload)
+            yield ReviewQueue(conn, audit=review_audit_hook(writer), hasher=writer.hash_payload, publish=publish)
         finally:
             conn.close()
 

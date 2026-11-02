@@ -18,6 +18,7 @@ class EventType:
     LEAD_SCORED = "lead.scored"
     LEAD_QUALIFIED = "lead.qualified"
     ACTION_PROPOSED = "action.proposed"
+    ACTION_APPROVED = "action.approved"
     COMPLIANCE_PASSED = "compliance.passed"
     ACTION_SENT = "action.sent"
     REPLY_RECEIVED = "reply.received"
