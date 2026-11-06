@@ -91,7 +91,7 @@ def test_PH4_a_percent_coupon_is_created_for_one_product_and_the_link_applies_it
     (Discount(kind="FIXED", fixed_minor=500), None, "SAVE", UnsupportedParameter),                       # the unit of the amount is unconfirmed
     (Discount(kind="PERCENT", percent=Decimal("10")), T0, "SAVE", UnsupportedParameter),                  # expiry is unconfirmed too
     (Discount(kind="PERCENT", percent=Decimal("12.5")), None, "SAVE", UnsupportedParameter), (Discount(kind="PERCENT", percent=Decimal("0")), None, "SAVE", UnsupportedParameter),
-    (Discount(kind="PERCENT", percent=Decimal("101")), None, "SAVE", UnsupportedParameter),
+    (Discount.model_construct(kind="PERCENT", percent=Decimal("101")), None, "SAVE", UnsupportedParameter),
     (Discount(kind="PERCENT", percent=Decimal("10")), None, "no_underscores", ValueError), (Discount(kind="PERCENT", percent=Decimal("10")), None, "AB", ValueError)])
 def test_PH4b_what_cannot_be_done_safely_is_refused_before_any_remote_change(discount, expires, code, exc):
     a = adapter()
