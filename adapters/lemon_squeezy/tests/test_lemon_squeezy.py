@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from adapters.base import UnsupportedCapability
 from adapters.errors import AuthExpired, MalformedResponse, NotFound, RateLimited, Rejected, UnsupportedParameter
@@ -113,7 +114,7 @@ def test_LS5_percent_and_fixed_discounts_are_limited_to_the_products_variants():
 
 @pytest.mark.parametrize("discount,expires,code,exc", [
     (Discount(kind="PERCENT", percent=Decimal("12.5")), None, "SAVE", UnsupportedParameter), (Discount(kind="PERCENT", percent=Decimal("0")), None, "SAVE", UnsupportedParameter),
-    (Discount(kind="PERCENT", percent=Decimal("101")), None, "SAVE", UnsupportedParameter), (Discount(kind="FIXED", fixed_minor=0), None, "SAVE", UnsupportedParameter),
+    (Discount.model_construct(kind="PERCENT", percent=Decimal("101")), None, "SAVE", UnsupportedParameter), (Discount(kind="FIXED", fixed_minor=0), None, "SAVE", UnsupportedParameter),
     (Discount(kind="PERCENT", percent=Decimal("10")), None, "has_underscore", ValueError), (Discount(kind="PERCENT", percent=Decimal("10")), None, "AB", ValueError),
     (Discount(kind="PERCENT", percent=Decimal("10")), None, "x" * 65, ValueError), (Discount(kind="PERCENT", percent=Decimal("10")), datetime(2026, 12, 1), "SAVE", ValueError)])
 def test_LS5b_refusals_happen_before_any_remote_change(discount, expires, code, exc):
@@ -122,6 +123,12 @@ def test_LS5b_refusals_happen_before_any_remote_change(discount, expires, code, 
     with pytest.raises(exc):
         a.create_offer_code("p1", code, discount, expires)
     assert a.transport.writes == []
+
+
+def test_LS5b2_the_model_itself_refuses_a_percent_above_100():
+    # the adapter check for >100 is defence in depth; the model stops it first
+    with pytest.raises(ValidationError):
+        Discount(kind="PERCENT", percent=Decimal("101"))
 
 
 def test_LS5c_an_unknown_product_is_not_found_and_changes_nothing():
