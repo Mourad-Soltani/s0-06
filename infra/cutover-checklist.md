@@ -14,7 +14,7 @@ Open (known to be undone), Unconfirmed (not evidenced in the project record, con
 | C6 | Secrets manager live; a real credential revoker replaces `NotConfiguredRevoker` | S0-04, ADR-15 | Open | Yes, blocks production cutover |
 | C7 | Cost alert channel decided (D2); model names and prices configured | ADR-04 | Open | Yes, blocks production cutover |
 | C8 | Backups configured at 30 days; a restore plus erasure-ledger replay drill passed in the real environment | ADR-10 | Unconfirmed | Yes, blocks production cutover |
-| C9 | Legal review of outbound messaging against marketplace terms (Etsy, Fiverr, Amazon) | spec section 12 | Unconfirmed | Yes, blocks production cutover |
+| C9 | Legal review of outbound messaging against marketplace terms (Etsy, Fiverr, Amazon). Also review: a keyed attribution token to replace the raw lead id in checkout links (ADR-23), and the lead id shared with Lemon Squeezy as checkout custom data (ADR-25) | spec section 12 | Unconfirmed | Yes, blocks production cutover |
 | C10 | Lemon Squeezy and Payhip accounts provisioned; vendor spike report (S0-03) verified for the adapters in use | S0-03, S0-05 | Unconfirmed | Yes, blocks production cutover |
 | C11 | Kill switch: decide whether an HTTP API is required for v1.1 | ADR-15 | Open | Decision needed |
 | C12 | LICENSE copyright holder confirmed | S1-00 | Open | No |
