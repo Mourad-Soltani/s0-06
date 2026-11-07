@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ui.review_client import AuthError, ReviewApiError
 
@@ -13,15 +13,19 @@ GOOD_BODY = "Subject: Your guide is ready\n\nHi,\n\nHere it is: https://shop.exa
 
 
 def make_detail(*, verdict: Optional[str] = "PASS", tier: int = 0, status: str = "PROPOSED", body: str = GOOD_BODY, source: str = "TEMPLATE",
-                findings=(), age_minutes: int = 0, marketplace: str = "EMAIL", lead: Optional[dict] = ...) -> Dict[str, Any]:
+                findings=(), age_minutes: int = 0, marketplace: str = "EMAIL", lead: Optional[dict] = ...,
+                route: Optional[Tuple[str, str]] = None) -> Dict[str, Any]:
+    """route (S4-03) is (marketplace, reason): the checkout marketplace the draft was routed to, recorded in its payload as the pipeline does."""
     default_lead = {"status": "QUALIFIED", "composite_score": 75, "confidence": 0.8, "icp_match_score": 90, "pain_intensity": 50,
                     "authority_signal": 50, "timeline_signal": 80, "budget_signal": 80, "risk_flags": [], "product_external_id": "gr-1",
                     "source_type": "INBOUND", "source_marketplace": "EMAIL", "created_at": T0.isoformat()}
+    payload = {"context": "consented_outreach", "body": body, "source": source, "product_external_id": "gr-1", "discount_pct": None, "offer_code": None}
+    if route is not None:
+        payload["route_marketplace"], payload["route_reason"] = route
     return {"proposal_id": str(uuid.uuid4()), "lead_id": str(uuid.uuid4()), "role": "COPYWRITER", "marketplace": marketplace, "channel": "EMAIL",
             "action_type": "SEND_MESSAGE", "autonomy_tier": tier, "confidence": 0.6, "compliance_verdict": verdict, "status": status,
             "created_at": (T0 - timedelta(minutes=age_minutes)).isoformat(), "payload_ref": str(uuid.uuid4()),
-            "payload": {"context": "consented_outreach", "body": body, "source": source, "product_external_id": "gr-1",
-                        "discount_pct": None, "offer_code": None},
+            "payload": payload,
             "lead": default_lead if lead is ... else lead, "findings": [{"rule_code": c, "severity": s, "evaluated_at": T0.isoformat()} for c, s in findings]}
 
 
