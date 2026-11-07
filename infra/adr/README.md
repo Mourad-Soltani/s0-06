@@ -30,5 +30,6 @@ One decision per file. `accepted` means ruled by the product owner or Head Chief
 | [ADR-24](ADR-24-reconciliation.md) | Settling sends that were claimed but never recorded | proposed | BL-04 |
 | [ADR-25](ADR-25-lemon-squeezy-payhip-webhooks.md) | Lemon Squeezy and Payhip adapters, and webhook signals | proposed | S4-01, S4-02 |
 | [ADR-26](ADR-26-listing-routing.md) | Routing a draft to one of a product's marketplaces | proposed | S4-03, S4-04 |
+| [ADR-27](ADR-27-cutover-kit-1.md) | Cutover kit 1: real email, configuration from the environment, containers | proposed | Phase 5, C3, C6 |
 
 The production-cutover blockers are on [../cutover-checklist.md](../cutover-checklist.md).
