@@ -39,6 +39,13 @@ FINDING_LABELS = {
     "OFFER_CODES_UNSUPPORTED": "This channel cannot create offer codes", "BROWSER_AUTOMATION": "It would need browser automation, which is not allowed",
     "CAPTCHA_BYPASS": "It would need a CAPTCHA bypass, which is not allowed", "DEVICE_VERIFICATION_BYPASS": "It would need a device-check bypass, which is not allowed",
     "ACCOUNT_LINKING_BYPASS": "It would need an account-linking bypass, which is not allowed"}
+# S4-03: where the draft's checkout link points, in words. Unknown marketplaces and reasons fall back to a readable form of the code.
+_MARKETPLACES = {"GUMROAD": "Gumroad", "LEMON_SQUEEZY": "Lemon Squeezy", "PAYHIP": "Payhip", "ETSY": "Etsy", "SHOPIFY": "Shopify",
+                 "AMAZON": "Amazon", "FIVERR": "Fiverr", "ACP": "ACP", "UCP": "UCP", "EMAIL": "Email"}
+ROUTE_REASONS = {
+    "LEAD_ORIGIN": "this is the marketplace the lead came from", "ONLY_LISTING": "it is the only active listing for this product",
+    "MOST_PROFITABLE": "it leaves the most money after the marketplace's fees", "TIE_BREAK": "listings tie on profit, so the first by name was chosen",
+    "FEE_UNKNOWN": "fees are missing for some listings, so profit could not be compared", "FALLBACK": "the preferred listing could not be shown"}
 _SCORES = (("icp_match_score", "Fit with your ideal customer"), ("pain_intensity", "Need"), ("authority_signal", "Decision power"),
            ("timeline_signal", "Timing"), ("budget_signal", "Budget"))
 
@@ -107,6 +114,7 @@ class DetailView:
     writer_confidence_pct: Optional[int]
     can_approve: bool
     approve_blocked_reason: Optional[str]
+    route_line: Optional[str] = None       # S4-03: which marketplace's checkout link this draft carries, and why
 
 
 def split_message(body: Any) -> Tuple[str, str]:
@@ -117,6 +125,16 @@ def split_message(body: Any) -> Tuple[str, str]:
             return head[len("Subject:"):].strip(), rest
         return "(no subject)", body
     return "(no subject)", ""
+
+
+def route_line(payload: Dict[str, Any]) -> str:
+    """'Checkout on Lemon Squeezy: it leaves the most money ...', or 'Checkout marketplace: not recorded' for a draft that was not routed."""
+    mp, reason = payload.get("route_marketplace"), payload.get("route_reason")
+    if not isinstance(mp, str) or not mp:
+        return "Checkout marketplace: not recorded"
+    name = _MARKETPLACES.get(mp, mp.replace("_", " ").title())
+    why = ROUTE_REASONS.get(reason) if isinstance(reason, str) else None
+    return f"Checkout on {name}: {why}" if why else f"Checkout on {name}"
 
 
 def detail_view(d: Dict[str, Any]) -> DetailView:
@@ -154,4 +172,4 @@ def detail_view(d: Dict[str, Any]) -> DetailView:
                       subject=subject, body=body, source_label=source_label, offer_line=offer, verdict=verdict,
                       verdict_label=_VERDICT.get(verdict, "Unknown"), findings=findings, scores=scores, score_headline=headline,
                       lead_summary=summary, risk_flags=flags, tier=tier, tier_note=note, writer_confidence_pct=_pct(d.get("confidence")),
-                      can_approve=can, approve_blocked_reason=why)
+                      can_approve=can, approve_blocked_reason=why, route_line=route_line(payload))

@@ -77,6 +77,8 @@ def render(dash: Dashboard) -> None:
         st.text(v.body)
         if v.offer_line:
             st.caption(v.offer_line)
+        if v.route_line:
+            st.caption(v.route_line)
     with right:
         st.subheader("Why it is here")
         st.metric("Lead score", v.score_headline)
