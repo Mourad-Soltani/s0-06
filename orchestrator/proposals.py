@@ -14,13 +14,15 @@ from typing import Callable, Optional, Tuple
 
 from orchestrator.copy_schema import DraftBrief
 from orchestrator.copywriter import Copywriter
+from orchestrator.router import Route
 from shared.bus.events import EventType, event_id_for
 
 _KEY_NAMESPACE = uuid.UUID("6f1c2a54-0b1e-4c1d-9a55-3e2f7d0a8b11")
 
 
-def idempotency_key(brief: DraftBrief) -> uuid.UUID:
-    return uuid.uuid5(_KEY_NAMESPACE, f"{brief.lead_id}|{brief.product.external_id}|{brief.context}")
+def idempotency_key(brief: DraftBrief, product_id: Optional[str] = None) -> uuid.UUID:
+    """product_id is the id the LEAD named when the draft was routed (S4-03): the listing can change with the fees, the lead and its product cannot."""
+    return uuid.uuid5(_KEY_NAMESPACE, f"{brief.lead_id}|{product_id or brief.product.external_id}|{brief.context}")
 
 
 def assign_tier(stats, now: datetime) -> int:
@@ -41,9 +43,10 @@ class ProposalWriter:
         self.conn, self.copywriter, self._hasher, self._stats = conn, copywriter, hasher, stats_provider
         self._audit, self._publish, self._clock = audit, publish, clock
 
-    def create(self, brief: DraftBrief) -> Tuple[uuid.UUID, bool]:
-        """Returns (proposal_id, created). created is False when the proposal already existed."""
-        key = idempotency_key(brief)
+    def create(self, brief: DraftBrief, route: Optional[Route] = None) -> Tuple[uuid.UUID, bool]:
+        """Returns (proposal_id, created). created is False when the proposal already existed. route (S4-03) is recorded in the payload:
+        the marketplace whose checkout link the draft carries, and why. Without one the payload is exactly what it was before."""
+        key = idempotency_key(brief, route.lead_product_id if route is not None else None)
         row = self.conn.execute("SELECT id FROM core.action_proposal WHERE idempotency_key = %s", (key,)).fetchone()
         if row:
             return row[0], False
@@ -55,6 +58,8 @@ class ProposalWriter:
                    "offer_code": brief.offer_code}
         if brief.contact_permission_id is not None:
             payload["consent_ref"] = str(brief.contact_permission_id)
+        if route is not None:
+            payload["route_marketplace"], payload["route_reason"] = route.marketplace, route.reason
         from psycopg.types.json import Json          # late import: the database driver
         with self.conn.transaction():
             ref = self.conn.execute("INSERT INTO pii.payload_store (lead_id, body) VALUES (%s, %s) RETURNING payload_id",

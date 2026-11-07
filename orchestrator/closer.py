@@ -75,8 +75,12 @@ def _default_publish():
 class Closer:
     def __init__(self, connect: Callable[[], AbstractContextManager], product_adapter, channel_adapters: Mapping[str, object],
                  guard: ComplianceGuard, *, config: Optional[CloserConfig] = None, audit_factory: Optional[Callable] = _default_audit,
-                 publish: Optional[Callable] = None):
+                 publish: Optional[Callable] = None, product_adapters: Optional[Mapping[str, object]] = None):
+        """product_adapters (S4-03) maps a marketplace to the adapter that builds its checkout links. A routed draft (payload.route_marketplace)
+        is closed with ITS marketplace's adapter and with nothing else: a route that has no adapter fails the proposal rather than falling
+        back to another marketplace's link. A draft without a route uses product_adapter, as before."""
         self._connect, self.products, self.channels, self.guard = connect, product_adapter, dict(channel_adapters), guard
+        self.product_adapters = dict(product_adapters or {})
         self.config, self._audit_factory, self._publish = config or CloserConfig(), audit_factory, publish
 
     # ------------------------------------------------------------------ the bus and the sweep
@@ -139,8 +143,13 @@ class Closer:
                 return fail("NO_CHANNEL_ADAPTER")
             if not product_id or contact_id is None or not isinstance(payload.get("body"), str):
                 return fail("NO_PRODUCT" if not product_id else "NOTHING_TO_SEND")
-            plain = self.products.build_checkout_url(product_id, {})
-            attributed = self.products.build_checkout_url(product_id, {self.config.ref_param: str(lead_id)})
+            products, route = self.products, payload.get("route_marketplace")
+            if route is not None:
+                products = self.product_adapters.get(route) if isinstance(route, str) else None
+                if products is None:
+                    return fail("NO_PRODUCT_ADAPTER")                              # never another marketplace's link for a draft routed elsewhere
+            plain = products.build_checkout_url(product_id, {})
+            attributed = products.build_checkout_url(product_id, {self.config.ref_param: str(lead_id)})
             final_body, how = attribute_link(payload["body"], plain, attributed)
             live = permission is not None and conn.execute(
                 "SELECT 1 FROM pii.contact_permission cp JOIN pii.contact c ON c.contact_id = cp.contact_id WHERE cp.id = %s "
