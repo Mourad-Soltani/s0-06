@@ -1,0 +1,15 @@
+# Nothing secret and nothing the running system does not need goes into the image.
+.git
+.github
+.env
+.env.*
+!.env.example
+secrets/
+config/
+**/__pycache__
+**/*.pyc
+**/tests/
+docs/
+*.md
+!requirements.txt
+.pytest_cache
