@@ -97,3 +97,11 @@ def test_AT8_text_from_a_draft_is_shown_as_plain_text_never_as_markup():
     at = signed_in(FakeReviewClient(make_detail(body=hostile)))
     assert not at.exception and "<b>Hi</b> **now**" in texts(at) and any("<script>alert(1)</script>" in t for t in texts(at))
     assert not any("<script>" in m.value for m in at.markdown)                   # nothing from the draft went through markdown
+
+
+def test_AT9_the_reviewer_sees_which_marketplace_the_draft_is_routed_to_and_an_unrouted_one_says_so():
+    routed = signed_in(FakeReviewClient(make_detail(route=("LEMON_SQUEEZY", "MOST_PROFITABLE"))))
+    assert not routed.exception and any(c.value.startswith("Checkout on Lemon Squeezy: ") for c in routed.caption)
+    unrouted = signed_in(FakeReviewClient(make_detail()))
+    assert not unrouted.exception and any(c.value == "Checkout marketplace: not recorded" for c in unrouted.caption)
+    assert not any("Checkout" in m.value for m in routed.markdown)                  # shown as plain text, not markup
