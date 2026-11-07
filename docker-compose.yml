@@ -1,0 +1,105 @@
+# Postgres + migrations + the event-bus worker + the review API + the Streamlit review UI (cutover kit 1, ADR-27).
+#   cp .env.example .env     # fill it in; never commit it
+#   docker compose up -d --build
+# Every service receives ONLY the variables it needs (no env_file): the UI never sees the email token, the worker never sees the review tokens.
+# Nothing is published except the review UI, and only on this machine's loopback: put a TLS proxy in front of it (cutover C14).
+name: sales-agent
+
+x-app: &app
+  image: sales-agent:local
+  build: .
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sap
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sap"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # no ports: only the services on this compose network can reach the database
+
+  migrate:
+    <<: *app
+    restart: "no"
+    working_dir: /app/infra/schema
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/sap     # Alembic (SQLAlchemy URL form)
+      ADMIN_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/sap        # the role provisioning script
+      SAP_WORKER_PASSWORD: ${SAP_WORKER_PASSWORD:?set SAP_WORKER_PASSWORD in .env}
+      SAP_REVIEW_PASSWORD: ${SAP_REVIEW_PASSWORD:?set SAP_REVIEW_PASSWORD in .env}
+    command: ["sh", "-c", "alembic upgrade head && python /app/infra/docker/provision_roles.py"]
+
+  worker:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://sap_worker:${SAP_WORKER_PASSWORD}@db:5432/sap
+      POSTMARK_SERVER_TOKEN: ${POSTMARK_SERVER_TOKEN:?set POSTMARK_SERVER_TOKEN in .env}
+      POSTMARK_MESSAGE_STREAM: ${POSTMARK_MESSAGE_STREAM:-outbound}
+      POSTMARK_LOOKUP: ${POSTMARK_LOOKUP:-false}
+      EMAIL_FROM: ${EMAIL_FROM:?set EMAIL_FROM in .env}
+      EMAIL_POSTAL_ADDRESS: ${EMAIL_POSTAL_ADDRESS:?set EMAIL_POSTAL_ADDRESS in .env}
+      EMAIL_UNSUBSCRIBE_URL: ${EMAIL_UNSUBSCRIBE_URL:?set EMAIL_UNSUBSCRIBE_URL in .env}
+      ALLOWED_LINK_HOSTS: ${ALLOWED_LINK_HOSTS:?set ALLOWED_LINK_HOSTS in .env}
+      ICP_PRODUCT_IDS: ${ICP_PRODUCT_IDS:?set ICP_PRODUCT_IDS in .env}
+      MAX_DISCOUNT_PCT: ${MAX_DISCOUNT_PCT:-0}
+      ROUTING_ENABLED: ${ROUTING_ENABLED:-false}
+      GUMROAD_ACCESS_TOKEN: ${GUMROAD_ACCESS_TOKEN:-}
+      LEMON_SQUEEZY_API_KEY: ${LEMON_SQUEEZY_API_KEY:-}
+      LEMON_SQUEEZY_STORE_ID: ${LEMON_SQUEEZY_STORE_ID:-}
+      PAYHIP_API_KEY: ${PAYHIP_API_KEY:-}
+      PAYHIP_CATALOG_FILE: ${PAYHIP_CATALOG_FILE:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      WORKER_ID: ${WORKER_ID:-worker-1}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-1}
+      CLOSER_SWEEP_SECONDS: ${CLOSER_SWEEP_SECONDS:-60}
+    volumes:
+      - ./config:/config:ro          # e.g. /config/payhip.json for PAYHIP_CATALOG_FILE
+    command: ["python", "-m", "orchestrator.worker_main", "run"]
+    stop_grace_period: 30s           # lets the worker finish the event in hand on SIGTERM
+
+  review-api:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://sap_review:${SAP_REVIEW_PASSWORD}@db:5432/sap
+      REVIEW_API_TOKENS_FILE: /run/secrets/review_tokens
+    secrets:
+      - review_tokens
+    ports:
+      - "127.0.0.1:8501:8501"        # the UI below shares this container's network, so its port is published here, on loopback only
+    command: ["python", "-m", "orchestrator.review_server"]      # binds 127.0.0.1:8080 inside the shared network namespace
+
+  ui:
+    <<: *app
+    network_mode: "service:review-api"   # reaches the API at http://127.0.0.1:8080, which the UI's address check allows without TLS; nothing else can
+    depends_on:
+      - review-api
+    environment:
+      REVIEW_API_URL: http://127.0.0.1:8080
+    command: ["streamlit", "run", "ui/app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true",
+              "--browser.gatherUsageStats", "false"]
+
+secrets:
+  review_tokens:
+    file: ./secrets/review_tokens.json   # {"<long random token>": "<reviewer id>", ...}  see secrets/review_tokens.example.json
+
+volumes:
+  pgdata:

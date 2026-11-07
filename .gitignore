@@ -1,3 +1,12 @@
 
 __pycache__/
 *.py[cod]
+
+# Credentials: never committed (cutover kit 1)
+.env
+.env.*
+!.env.example
+secrets/*
+!secrets/review_tokens.example.json
+config/*
+!config/.gitkeep
