@@ -101,7 +101,8 @@ def test_WS4_the_server_binds_where_it_is_told_with_the_body_limit_threads_and_n
 def test_WS5_the_per_call_inbox_checks_its_url_hides_it_and_connects_only_when_used():
     inbox = DsnSignalInbox(DSN)                                                                      # no connection is opened here
     assert repr(inbox) == "DsnSignalInbox()" and "pw-0123" not in repr(inbox)
-    for bad in ("", "mysql://x", None, 5):
+    assert repr(DsnSignalInbox("host=db dbname=sap user=u password=pw-0123456789")) == "DsnSignalInbox()"       # libpq key=value form is accepted too
+    for bad in ("", "   ", None, 5):
         with pytest.raises(ValueError):
             DsnSignalInbox(bad)
 
