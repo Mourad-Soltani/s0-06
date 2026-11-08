@@ -12,6 +12,9 @@ GOOD = {
     "ALLOWED_LINK_HOSTS": "gumroad.com, Buy.Example.com", "ICP_PRODUCT_IDS": "gr-1,ls-1", "GUMROAD_ACCESS_TOKEN": "gum-token-xyz"}
 
 
+LLM = {"LLM_PROVIDER": "anthropic", "LLM_MODEL": "model-x", "LLM_INPUT_PRICE_MICRO_PER_MTOK": "3000000", "LLM_OUTPUT_PRICE_MICRO_PER_MTOK": "15000000"}
+
+
 def problems(env):
     with pytest.raises(ConfigError) as e:
         load_settings(env)
@@ -27,7 +30,7 @@ def test_CF1_a_minimal_good_environment_loads_with_safe_defaults():
 
 
 def test_CF2_secrets_never_print_in_a_repr_a_str_or_a_pickle():
-    s = load_settings({**GOOD, "LLM_PROVIDER": "anthropic", "LLM_API_KEY": "llm-key-123456"})
+    s = load_settings({**GOOD, **LLM, "LLM_API_KEY": "llm-key-123456"})
     shown = repr(s) + str(s) + repr(s.database_url) + f"{s.postmark_token}" + str(s.llm_key)
     for value in ("s3cret-pw", "pm-token-abcdef", "gum-token-xyz", "llm-key-123456"):
         assert value not in shown
@@ -60,8 +63,6 @@ def test_CF5_at_least_one_marketplace_is_needed_and_pairs_must_be_complete():
     assert problems(env)[0].startswith("GUMROAD_ACCESS_TOKEN: at least one marketplace")
     assert problems({**env, "LEMON_SQUEEZY_API_KEY": "k"})[0].startswith("LEMON_SQUEEZY_API_KEY: set together")
     assert problems({**env, "LEMON_SQUEEZY_STORE_ID": "42"})[0].startswith("LEMON_SQUEEZY_API_KEY: set together")
-    assert problems({**GOOD, "LLM_PROVIDER": "anthropic"})[0].startswith("LLM_API_KEY: set together")
-    assert problems({**GOOD, "LLM_API_KEY": "k"})[0].startswith("LLM_API_KEY: set together")
     assert problems({**env, "PAYHIP_API_KEY": "p"}) == ("PAYHIP_CATALOG_FILE: required with PAYHIP_API_KEY (Payhip cannot list products)",)
     s = load_settings({**env, "LEMON_SQUEEZY_API_KEY": "k", "LEMON_SQUEEZY_STORE_ID": "42", "PAYHIP_API_KEY": "p", "PAYHIP_CATALOG_FILE": "/data/payhip.json"})
     assert s.marketplaces == ("LEMON_SQUEEZY", "PAYHIP") and s.lemon_squeezy_store_id == "42" and s.payhip_catalog_file == "/data/payhip.json"
@@ -116,3 +117,37 @@ def test_CF11_only_the_named_secrets_honour_a_file_variable():
 def test_CF12_blank_values_count_as_unset_and_optional_settings_stay_optional():
     s = load_settings({**GOOD, "PAYHIP_API_KEY": "   ", "LLM_PROVIDER": "", "POSTMARK_MESSAGE_STREAM": ""})
     assert s.payhip_key is None and s.llm_provider is None and s.postmark_stream == "outbound"
+
+
+def test_CF13_the_language_model_needs_a_provider_a_key_a_model_and_prices_all_together():
+    s = load_settings({**GOOD, **LLM, "LLM_API_KEY": "llm-key-123456"})
+    assert (s.llm_provider, s.llm_model, s.llm_input_price, s.llm_output_price, s.llm_max_retries, s.llm_configured) == ("anthropic", "model-x", 3000000, 15000000, 2, True)
+    assert problems({**GOOD, "LLM_PROVIDER": "openai"})[0].startswith("LLM_API_KEY: required with LLM_PROVIDER")
+    assert problems({**GOOD, "LLM_API_KEY": "k"}) == ("LLM_PROVIDER: required with LLM_API_KEY",)
+    assert problems({**GOOD, "LLM_PROVIDER": "acme", "LLM_API_KEY": "k"}) == ("LLM_PROVIDER: must be openai or anthropic",)
+    no_model = {k: v for k, v in LLM.items() if k != "LLM_MODEL"}
+    assert problems({**GOOD, **no_model, "LLM_API_KEY": "k"}) == ("LLM_MODEL: required with LLM_PROVIDER (a price of 0 is refused: it would switch the budget check off)",)
+    for name in ("LLM_INPUT_PRICE_MICRO_PER_MTOK", "LLM_OUTPUT_PRICE_MICRO_PER_MTOK"):
+        assert problems({**GOOD, **LLM, "LLM_API_KEY": "k", name: "0"}) == (f"{name}: must be between 1 and 1000000000000",)         # a zero price would hide spend
+        assert problems({**GOOD, **LLM, "LLM_API_KEY": "k", name: "2.5"}) == (f"{name}: must be a whole number",)
+    assert problems({**GOOD, **LLM, "LLM_API_KEY": "k", "LLM_MAX_RETRIES": "9"}) == ("LLM_MAX_RETRIES: must be between 0 and 5",)
+    assert load_settings(GOOD).llm_configured is False                                                  # no language model: every draft is the template
+
+
+def test_CF14_a_provider_specific_key_names_the_provider_and_two_of_them_need_an_explicit_choice():
+    openai = {k: v for k, v in LLM.items() if k != "LLM_PROVIDER"}
+    s = load_settings({**GOOD, **openai, "OPENAI_API_KEY": "sk-openai-123456"})
+    assert s.llm_provider == "openai" and s.llm_key.reveal() == "sk-openai-123456" and "sk-openai" not in repr(s)
+    s2 = load_settings({**GOOD, **openai, "ANTHROPIC_API_KEY": "sk-ant-123456"})
+    assert s2.llm_provider == "anthropic"
+    both = {**GOOD, **openai, "OPENAI_API_KEY": "a", "ANTHROPIC_API_KEY": "b"}
+    assert problems(both) == ("LLM_PROVIDER: required when both OPENAI_API_KEY and ANTHROPIC_API_KEY are set",)
+    assert load_settings({**both, "LLM_PROVIDER": "anthropic"}).llm_key.reveal() == "b"                   # the chosen provider's own key
+    assert load_settings({**both, "LLM_PROVIDER": "openai", "LLM_API_KEY": "generic"}).llm_key.reveal() == "generic"   # LLM_API_KEY wins when given
+
+
+def test_CF15_the_language_model_key_can_come_from_a_secret_file(tmp_path):
+    f = tmp_path / "openai_key"
+    f.write_text("sk-from-file\n")
+    openai = {k: v for k, v in LLM.items() if k != "LLM_PROVIDER"}
+    assert load_settings({**GOOD, **openai, "OPENAI_API_KEY_FILE": str(f)}).llm_key.reveal() == "sk-from-file"

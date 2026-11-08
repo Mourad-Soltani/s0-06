@@ -1,8 +1,9 @@
-# Postgres + migrations + the event-bus worker + the review API + the Streamlit review UI (cutover kit 1, ADR-27).
+# Postgres + migrations + the event-bus worker (with the Scout loop) + the webhook receiver + the review API + the Streamlit review UI
+# (cutover kit 1 and drop 2: ADR-27, ADR-28).
 #   cp .env.example .env     # fill it in; never commit it
 #   docker compose up -d --build
 # Every service receives ONLY the variables it needs (no env_file): the UI never sees the email token, the worker never sees the review tokens.
-# Nothing is published except the review UI, and only on this machine's loopback: put a TLS proxy in front of it (cutover C14).
+# Nothing is published except the review UI and the webhook receiver, each only on this machine's loopback: put a TLS proxy in front (cutover C14).
 name: sales-agent
 
 x-app: &app
@@ -39,6 +40,7 @@ services:
       ADMIN_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/sap        # the role provisioning script
       SAP_WORKER_PASSWORD: ${SAP_WORKER_PASSWORD:?set SAP_WORKER_PASSWORD in .env}
       SAP_REVIEW_PASSWORD: ${SAP_REVIEW_PASSWORD:?set SAP_REVIEW_PASSWORD in .env}
+      SAP_WEBHOOK_PASSWORD: ${SAP_WEBHOOK_PASSWORD:?set SAP_WEBHOOK_PASSWORD in .env}
     command: ["sh", "-c", "alembic upgrade head && python /app/infra/docker/provision_roles.py"]
 
   worker:
@@ -68,10 +70,33 @@ services:
       WORKER_ID: ${WORKER_ID:-worker-1}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-1}
       CLOSER_SWEEP_SECONDS: ${CLOSER_SWEEP_SECONDS:-60}
+      SCOUT_POLL_SECONDS: ${SCOUT_POLL_SECONDS:-30}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_INPUT_PRICE_MICRO_PER_MTOK: ${LLM_INPUT_PRICE_MICRO_PER_MTOK:-}
+      LLM_OUTPUT_PRICE_MICRO_PER_MTOK: ${LLM_OUTPUT_PRICE_MICRO_PER_MTOK:-}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - ./config:/config:ro          # e.g. /config/payhip.json for PAYHIP_CATALOG_FILE
     command: ["python", "-m", "orchestrator.worker_main", "run"]
     stop_grace_period: 30s           # lets the worker finish the event in hand on SIGTERM
+
+  webhooks:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://sap_webhook:${SAP_WEBHOOK_PASSWORD}@db:5432/sap     # app_rw only: it can write the signal inbox and read nothing personal
+      WEBHOOK_CONFIG_FILE: /run/secrets/webhook_config
+      BIND_HOST: 0.0.0.0
+      PORT: "8081"
+    secrets:
+      - webhook_config
+    ports:
+      - "127.0.0.1:8081:8081"        # a TLS proxy forwards https://your-domain/webhooks/<provider>/<token> here; never publish this directly
+    command: ["python", "-m", "orchestrator.webhook_server"]
 
   review-api:
     <<: *app
@@ -100,6 +125,8 @@ services:
 secrets:
   review_tokens:
     file: ./secrets/review_tokens.json   # {"<long random token>": "<reviewer id>", ...}  see secrets/review_tokens.example.json
+  webhook_config:
+    file: ./secrets/webhook_config.json  # provider secrets and secret URL tokens: see secrets/webhook_config.example.json
 
 volumes:
   pgdata:
