@@ -13,8 +13,8 @@ from shared.signal_inbox import PgSignalInbox
 
 class DsnSignalInbox:
     def __init__(self, dsn: str):
-        if not isinstance(dsn, str) or not dsn.startswith(("postgresql://", "postgres://")):
-            raise ValueError("a postgresql:// URL is required")
+        if not isinstance(dsn, str) or not dsn.strip():
+            raise ValueError("a connection string is required")         # a URL or libpq key=value form: psycopg checks it when it connects
         self._dsn = dsn
 
     def _connect(self):

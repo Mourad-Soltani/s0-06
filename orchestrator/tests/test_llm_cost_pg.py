@@ -73,14 +73,18 @@ def test_LC2_a_call_that_would_pass_the_ceiling_is_never_made_and_the_draft_is_t
 
 
 def test_LC3_crossing_the_alert_threshold_logs_one_alert_per_month_and_does_not_repeat(db):
-    db.conn.execute("UPDATE core.cost_config SET monthly_ceiling_micro_usd = 2000, alert_pct = 80")        # one call (1,900) is 95% of 2,000
+    # The Copywriter checks headroom against a worst case (600 output tokens, about 6,000 micro-USD) BEFORE it calls, so the ceiling must leave room for
+    # that; the alert is reached by spend already on the books: 79,000 of 100,000 (79%), and one real call of 1,900 takes it to 80.9%.
+    db.conn.execute("UPDATE core.cost_config SET monthly_ceiling_micro_usd = 100000, alert_pct = 80")
+    CostTracker(db.conn, PRICES, LogNotifier()).record_infra(uuid.uuid4(), "SEED_SPEND", 79_000)
     stream = []
     handler = logging.Handler()
     handler.emit = lambda record: stream.append(record.getMessage())
     logging.getLogger("worker").addHandler(handler)
     try:
         _, brief, tracker, writer = setup(db, Opener(Resp(ANSWER)))
-        writer.draft(brief)
+        assert stream == []                                                                              # 79%: nothing yet
+        assert writer.draft(brief).source == "LLM"                                                       # the call was allowed and made
         assert [m.split()[0] for m in stream] == ["COST_ALERT"] and "threshold_pct=80" in stream[0]
         assert db.conn.execute("SELECT pct FROM core.cost_alert").fetchall() == [(80,)]
         tracker.check_alerts()                                                                           # nothing new crossed: nothing fires again
