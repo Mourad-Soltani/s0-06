@@ -8,5 +8,6 @@ __pycache__/
 !.env.example
 secrets/*
 !secrets/review_tokens.example.json
+!secrets/webhook_config.example.json
 config/*
 !config/.gitkeep

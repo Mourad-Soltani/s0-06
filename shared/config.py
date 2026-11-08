@@ -27,10 +27,13 @@ _WORKER = re.compile(r"^[A-Za-z0-9_:.-]{1,128}$")
 _HOST = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _PRODUCT_ID = re.compile(r"^[A-Za-z0-9_:.=-]{1,128}$")
 _STREAM = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_MODEL = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
+LLM_PROVIDERS = ("openai", "anthropic")
 _FROM = re.compile(r"^[^@\s<>\r\n]+@[^@\s<>\r\n]+\.[^@\s<>\r\n]+$")
 _TRUE, _FALSE = {"1", "true", "yes", "on"}, {"0", "false", "no", "off"}
 SECRET_NAMES = ("DATABASE_URL", "POSTMARK_SERVER_TOKEN", "GUMROAD_ACCESS_TOKEN", "LEMON_SQUEEZY_API_KEY", "PAYHIP_API_KEY", "LLM_API_KEY",
-                "ADMIN_DATABASE_URL", "SAP_WORKER_PASSWORD", "SAP_REVIEW_PASSWORD")      # the last three are read by infra/docker/provision_roles.py
+                "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                "ADMIN_DATABASE_URL", "SAP_WORKER_PASSWORD", "SAP_REVIEW_PASSWORD", "SAP_WEBHOOK_PASSWORD")      # the last four are read by infra/docker/provision_roles.py
 
 
 class ConfigError(Exception):
@@ -135,6 +138,10 @@ class Settings:
     payhip_catalog_file: Optional[str] = None            # Payhip cannot list products (ADR-25): the seller keeps a JSON catalogue
     llm_provider: Optional[str] = None
     llm_key: Optional[Secret] = field(default=None)
+    llm_model: Optional[str] = None                      # model names and prices are the seller's configuration (C7): nothing is built in
+    llm_input_price: Optional[int] = None                # micro-USD per million input tokens
+    llm_output_price: Optional[int] = None               # micro-USD per million output tokens
+    llm_max_retries: int = 2
     postmark_stream: str = "outbound"
     postmark_lookup: bool = False
     max_discount_pct: Decimal = Decimal("0")
@@ -142,6 +149,7 @@ class Settings:
     worker_id: str = "worker-1"
     poll_interval: float = 1.0
     sweep_seconds: float = 60.0
+    scout_poll_seconds: float = 30.0                    # 0 turns the Scout loop off
 
     @property
     def marketplaces(self) -> Tuple[str, ...]:
@@ -150,7 +158,7 @@ class Settings:
 
     @property
     def llm_configured(self) -> bool:
-        return bool(self.llm_provider and self.llm_key)
+        return bool(self.llm_provider and self.llm_key and self.llm_model)
 
 
 def load_settings(environ: Optional[Mapping[str, str]] = None, env_file: Optional[str] = None) -> Settings:
@@ -184,6 +192,20 @@ def load_settings(environ: Optional[Mapping[str, str]] = None, env_file: Optiona
             return default
         if not low <= value <= high:
             problems.append(f"{name}: must be between {low:g} and {high:g}")
+            return default
+        return value
+
+    def integer(name: str, low: int, high: int, *, default: Optional[int] = None) -> Optional[int]:
+        raw = text(name)
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            problems.append(f"{name}: must be a whole number")
+            return default
+        if not low <= value <= high:
+            problems.append(f"{name}: must be between {low} and {high}")
             return default
         return value
 
@@ -229,10 +251,26 @@ def load_settings(environ: Optional[Mapping[str, str]] = None, env_file: Optiona
     payhip_catalog = text("PAYHIP_CATALOG_FILE")
     if payhip and not payhip_catalog:
         problems.append("PAYHIP_CATALOG_FILE: required with PAYHIP_API_KEY (Payhip cannot list products)")
-    llm_provider = text("LLM_PROVIDER", pattern=re.compile(r"^[a-z][a-z0-9_-]{0,31}$"), reason="must be a short lowercase name")
-    llm_key = secret("LLM_API_KEY")
-    if bool(llm_provider) != bool(llm_key):
-        problems.append("LLM_API_KEY: set together with LLM_PROVIDER, or neither")
+    llm_provider = text("LLM_PROVIDER", pattern=re.compile(r"^(openai|anthropic)$"), reason="must be openai or anthropic")
+    generic_key, openai_key, anthropic_key = secret("LLM_API_KEY"), secret("OPENAI_API_KEY"), secret("ANTHROPIC_API_KEY")
+    if not llm_provider and not generic_key:                      # a provider-specific key alone names the provider
+        if openai_key and anthropic_key:
+            problems.append("LLM_PROVIDER: required when both OPENAI_API_KEY and ANTHROPIC_API_KEY are set")
+        elif openai_key or anthropic_key:
+            llm_provider = "openai" if openai_key else "anthropic"
+    llm_key = generic_key or {"openai": openai_key, "anthropic": anthropic_key}.get(llm_provider)
+    if llm_provider and not llm_key:
+        problems.append("LLM_API_KEY: required with LLM_PROVIDER (or OPENAI_API_KEY / ANTHROPIC_API_KEY)")
+    if generic_key and not llm_provider and not any(p.startswith("LLM_PROVIDER:") for p in problems):
+        problems.append("LLM_PROVIDER: required with LLM_API_KEY")
+    llm_model = text("LLM_MODEL", pattern=_MODEL, reason="has an invalid format")
+    llm_in = integer("LLM_INPUT_PRICE_MICRO_PER_MTOK", 1, 10**12)
+    llm_out = integer("LLM_OUTPUT_PRICE_MICRO_PER_MTOK", 1, 10**12)
+    llm_retries = integer("LLM_MAX_RETRIES", 0, 5, default=2)
+    if llm_provider and llm_key:
+        for name, value in (("LLM_MODEL", llm_model), ("LLM_INPUT_PRICE_MICRO_PER_MTOK", llm_in), ("LLM_OUTPUT_PRICE_MICRO_PER_MTOK", llm_out)):
+            if value is None and not any(p.startswith(name + ":") for p in problems):
+                problems.append(f"{name}: required with LLM_PROVIDER (a price of 0 is refused: it would switch the budget check off)")
 
     stream = text("POSTMARK_MESSAGE_STREAM", default="outbound", pattern=_STREAM, reason="must be lowercase letters, digits and hyphens")
     worker_id = text("WORKER_ID", default="worker-1", pattern=_WORKER, reason="must be an opaque id")
@@ -245,11 +283,13 @@ def load_settings(environ: Optional[Mapping[str, str]] = None, env_file: Optiona
         problems.append("MAX_DISCOUNT_PCT: must be a number from 0 to 100")
         discount = Decimal("0")
     poll, sweep = number("POLL_INTERVAL_SECONDS", 1.0, 0.1, 60.0), number("CLOSER_SWEEP_SECONDS", 60.0, 0.0, 86400.0)
+    scout_poll = number("SCOUT_POLL_SECONDS", 30.0, 0.0, 3600.0)
     lookup, routing = flag("POSTMARK_LOOKUP"), flag("ROUTING_ENABLED")
 
     if problems:
         raise ConfigError(problems)
     return Settings(database_url=database_url, postmark_token=postmark, email_from=email_from, postal_address=postal, unsubscribe_base_url=unsubscribe,
                     allowed_link_hosts=hosts, icp_product_ids=icp, gumroad_token=gumroad, lemon_squeezy_key=ls_key, lemon_squeezy_store_id=ls_store,
-                    payhip_key=payhip, payhip_catalog_file=payhip_catalog, llm_provider=llm_provider, llm_key=llm_key, postmark_stream=stream, postmark_lookup=lookup,
-                    max_discount_pct=discount, routing_enabled=routing, worker_id=worker_id, poll_interval=poll, sweep_seconds=sweep)
+                    payhip_key=payhip, payhip_catalog_file=payhip_catalog, llm_provider=llm_provider, llm_key=llm_key, llm_model=llm_model,
+                    llm_input_price=llm_in, llm_output_price=llm_out, llm_max_retries=llm_retries, postmark_stream=stream, postmark_lookup=lookup,
+                    max_discount_pct=discount, routing_enabled=routing, worker_id=worker_id, poll_interval=poll, sweep_seconds=sweep, scout_poll_seconds=scout_poll)

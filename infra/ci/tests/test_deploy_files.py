@@ -34,11 +34,11 @@ def interpolated(text):
 
 def read_by_settings():
     src = (ROOT / "shared" / "config.py").read_text()
-    return set(re.findall(r'\b(?:text|secret|number|flag|csv)\("([A-Z][A-Z0-9_]*)"', src))
+    return set(re.findall(r'\b(?:text|secret|number|integer|flag|csv)\("([A-Z][A-Z0-9_]*)"', src))
 
 
 def test_DP1_the_expected_services_exist():
-    assert set(service_blocks()) == {"db", "migrate", "worker", "review-api", "ui"}
+    assert set(service_blocks()) == {"db", "migrate", "worker", "webhooks", "review-api", "ui"}
 
 
 def test_DP2_every_setting_the_code_reads_is_in_the_env_example_and_passed_to_the_worker():
@@ -79,7 +79,8 @@ def test_DP6_each_service_receives_only_what_it_needs():
     ui, review, worker, db = (interpolated(blocks[k]) for k in ("ui", "review-api", "worker", "db"))
     assert ui == set()                                                     # the UI holds no credential at all: the reviewer types a token
     assert review == {"SAP_REVIEW_PASSWORD"}
-    assert "POSTMARK_SERVER_TOKEN" in worker and not worker & {"POSTGRES_PASSWORD", "SAP_REVIEW_PASSWORD"}
+    assert interpolated(blocks["webhooks"]) == {"SAP_WEBHOOK_PASSWORD"}                  # the internet-facing receiver holds no email, marketplace or model key
+    assert "POSTMARK_SERVER_TOKEN" in worker and not worker & {"POSTGRES_PASSWORD", "SAP_REVIEW_PASSWORD", "SAP_WEBHOOK_PASSWORD"}
     assert db == {"POSTGRES_PASSWORD"}
     assert not interpolated(blocks["review-api"]) & {"POSTMARK_SERVER_TOKEN", "GUMROAD_ACCESS_TOKEN", "LEMON_SQUEEZY_API_KEY", "LLM_API_KEY"}
 
@@ -87,19 +88,20 @@ def test_DP6_each_service_receives_only_what_it_needs():
 def test_DP7_only_the_review_ui_is_published_and_only_on_loopback_and_the_database_is_not():
     blocks = service_blocks()
     published = re.findall(r'^\s+- "([^"]*:\d+:\d+)"', COMPOSE, flags=re.M)
-    assert published == ["127.0.0.1:8501:8501"]
-    assert "ports:" not in blocks["db"] and "ports:" not in blocks["worker"] and "ports:" not in blocks["ui"]
+    assert published == ["127.0.0.1:8081:8081", "127.0.0.1:8501:8501"]                   # the receiver and the review UI, on loopback, behind a TLS proxy
+    assert all("ports:" not in blocks[name] for name in ("db", "migrate", "worker", "ui"))
     assert 'network_mode: "service:review-api"' in blocks["ui"]
 
 
 def test_DP8_the_services_start_the_right_programs_and_the_worker_waits_for_the_migrations():
     blocks = service_blocks()
     assert "orchestrator.worker_main" in blocks["worker"] and "orchestrator.review_server" in blocks["review-api"] and "ui/app.py" in blocks["ui"]
+    assert "orchestrator.webhook_server" in blocks["webhooks"] and "webhook_config" in blocks["webhooks"] and "BIND_HOST: 0.0.0.0" in blocks["webhooks"]
     assert "alembic upgrade head" in blocks["migrate"] and "provision_roles.py" in blocks["migrate"]
-    for name in ("worker", "review-api"):
+    for name in ("worker", "review-api", "webhooks"):
         assert "service_completed_successfully" in blocks[name]
     assert "service_healthy" in blocks["migrate"]
-    for path in ("orchestrator/worker_main.py", "orchestrator/review_server.py", "ui/app.py", "infra/docker/provision_roles.py", "infra/schema/alembic.ini"):
+    for path in ("orchestrator/worker_main.py", "orchestrator/review_server.py", "orchestrator/webhook_server.py", "ui/app.py", "infra/docker/provision_roles.py", "infra/schema/alembic.ini"):
         assert (ROOT / path).is_file(), path
 
 
@@ -113,13 +115,14 @@ def test_DP9_the_image_runs_unprivileged_and_never_copies_credentials():
 
 def test_DP10_credentials_are_ignored_by_git():
     ignored = (ROOT / ".gitignore").read_text().splitlines()
-    assert {".env", "secrets/*", "config/*"} <= set(ignored) and "!secrets/review_tokens.example.json" in ignored
+    assert {".env", "secrets/*", "config/*"} <= set(ignored) and {"!secrets/review_tokens.example.json", "!secrets/webhook_config.example.json"} <= set(ignored)
     assert (ROOT / "secrets" / "review_tokens.example.json").is_file() and not (ROOT / ".env").exists()
 
 
 def test_DP11_provisioning_refuses_weak_or_url_unsafe_passwords_before_creating_anything():
     import provision_roles
     good = "a" * 20
+    three = {"SAP_WORKER_PASSWORD": good, "SAP_REVIEW_PASSWORD": good, "SAP_WEBHOOK_PASSWORD": good}
     calls = []
 
     class Conn:
@@ -128,9 +131,10 @@ def test_DP11_provisioning_refuses_weak_or_url_unsafe_passwords_before_creating_
 
     for bad in ("", "short", "x" * 19, "has space in it xxxxxxxxxxxx", "slash/inside-xxxxxxxxxxxxxx", "p@ss:word-xxxxxxxxxxxxxxx", "x" * 129):
         with pytest.raises(ValueError) as e:
-            provision_roles.provision(Conn(), {"SAP_WORKER_PASSWORD": good, "SAP_REVIEW_PASSWORD": bad})
-        assert "SAP_REVIEW_PASSWORD" in str(e.value) and bad not in str(e.value) or bad == ""
-    assert calls == []                                                    # the worker's role was not created before the review role's password failed
+            provision_roles.provision(Conn(), {**three, "SAP_WEBHOOK_PASSWORD": bad})
+        assert "SAP_WEBHOOK_PASSWORD" in str(e.value) and (bad not in str(e.value) or bad == "")
+    assert calls == []                                                    # no role was created before the last password failed
+    assert [(r, g) for r, _, g in provision_roles.ROLES] == [("sap_worker", "review_svc"), ("sap_review", "review_svc"), ("sap_webhook", "app_rw")]
 
 
 def test_DP12_the_worker_has_the_three_commands_the_runbook_names():
