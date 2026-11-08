@@ -9,7 +9,8 @@ import pytest
 
 from adapters.email_channel.fake_transport import FakeEmailTransport
 from orchestrator import worker_main
-from orchestrator.worker_main import NO_MODEL, build, load_payhip_catalog, main, run_checks, serve
+from orchestrator.llm_providers import AnthropicLlmClient, OpenAiLlmClient
+from orchestrator.worker_main import NO_MODEL, LogNotifier, build, load_payhip_catalog, main, run_checks, serve
 from shared.config import ConfigError, load_settings
 
 GOOD = {
@@ -179,3 +180,46 @@ def test_WM10_a_bad_configuration_stops_the_process_with_names_only_and_never_op
         code = main(["run"], environ=env, env_file=None)
     assert code == 2 and "CONFIG ERROR DATABASE_URL" in err.getvalue() and "CONFIG ERROR POSTMARK_SERVER_TOKEN" in err.getvalue()
     assert "leaked-pw" not in err.getvalue() + out.getvalue()
+
+
+LLM = {"LLM_PROVIDER": "openai", "LLM_API_KEY": "sk-test-123456", "LLM_MODEL": "model-x", "LLM_INPUT_PRICE_MICRO_PER_MTOK": "2500000",
+       "LLM_OUTPUT_PRICE_MICRO_PER_MTOK": "10000000", "LLM_MAX_RETRIES": "1"}
+
+
+def test_WM11_without_a_language_model_the_copywriter_has_no_model_and_the_template_is_used():
+    cw = parts_for(settings()).copywriter
+    assert cw.llm.__class__.__name__ == "NotConfiguredLlmClient" and not any(cw.policy._models.values())
+
+
+def test_WM12_with_a_language_model_only_the_copywriter_role_uses_it_at_the_configured_price():
+    parts = parts_for(settings(**LLM))
+    cw = parts.copywriter
+    assert isinstance(cw.llm, OpenAiLlmClient) and cw.llm._max_retries == 1
+    assert cw.policy._models == {**NO_MODEL, "COPYWRITER": "model-x"}
+    assert cw.tracker.pricebook.estimate_micro("model-x", 1_000_000, 1_000_000) == 12_500_000                     # exactly the configured prices
+    assert "sk-test-123456" not in repr(cw.llm) + repr(parts)
+
+
+def test_WM13_the_provider_setting_selects_the_client_and_a_test_client_can_be_injected():
+    assert isinstance(parts_for(settings(**{**LLM, "LLM_PROVIDER": "anthropic"})).copywriter.llm, AnthropicLlmClient)
+    marker = object()
+    parts = build(settings(**LLM), connect=lambda: None, bus_conn=Conn(), product_adapters={"GUMROAD": Adapter()}, email_transport=FakeEmailTransport(), llm_client=marker)
+    assert parts.copywriter.llm is marker
+
+
+def test_WM14_the_cost_ledger_uses_its_own_connection_so_a_rolled_back_event_cannot_erase_money_already_spent():
+    bus, cost = Conn(), Conn()
+    parts = build(settings(**LLM), connect=lambda: None, bus_conn=bus, cost_conn=cost, product_adapters={"GUMROAD": Adapter()}, email_transport=FakeEmailTransport())
+    assert parts.copywriter.tracker.conn is cost and parts.worker.store.conn is bus
+
+
+def test_WM15_a_cost_alert_is_written_to_the_log_with_numbers_only():
+    import logging
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    worker_main.log.addHandler(handler)
+    try:
+        LogNotifier().notify(type("A", (), {"threshold_pct": 80, "spent_micro_usd": 240_000_000, "ceiling_micro_usd": 300_000_000})())
+    finally:
+        worker_main.log.removeHandler(handler)
+    assert stream.getvalue().strip() == "COST_ALERT threshold_pct=80 spent_micro_usd=240000000 ceiling_micro_usd=300000000"
